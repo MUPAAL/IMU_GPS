@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nav Console</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1 id="pageTitle">Navigation Console</h1>
+    <div class="header-center">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">Disconnected</span>
+    </div>
+    <div class="source-badges">
+      <span class="badge" id="badgeImu">IMU ✗</span>
+      <span class="badge" id="badgeRtk">RTK ✗</span>
+      <span class="badge" id="badgeRobot">Robot ✗</span>
+    </div>
+  </header>
+
+  <!-- Left sidebar: controls -->
+  <div id="layout">
+    <aside id="sidebar-left">
+      <div class="card">
+        <h3>Navigation</h3>
+        <button id="btnStartNav" class="btn-primary">▶ Start</button>
+        <button id="btnStopNav" class="btn-danger">■ Stop</button>
+        <button id="btnClearWp">Clear Waypoints</button>
+        <label class="file-label" title="Import CSV with lat,lon columns">
+          Import CSV
+          <input type="file" id="csvFile" accept=".csv,.txt" />
+        </label>
+      </div>
+      <div class="card">
+        <h3>Map Tools</h3>
+        <button id="btnFindMe">Find Me</button>
+        <button id="btnCenterCurrent">Center Robot</button>
+        <button id="btnEditRoute" id="btnEditRoute">Edit Route</button>
+        <button id="btnExportRoute">Export CSV</button>
+        <button id="btnClearTrack">Clear Track</button>
+      </div>
+      <div class="card">
+        <h3>Events</h3>
+        <ul id="eventList"></ul>
+      </div>
+    </aside>
+
+    <!-- Map -->
+    <div id="map"></div>
+
+    <!-- Right sidebar: data panels -->
+    <aside id="sidebar-right">
+
+      <!-- Command output -->
+      <div class="card card-cmd">
+        <h3>Command Output</h3>
+        <div class="cmd-display" id="vCmdDisplay">V0.00,0.000</div>
+        <div class="nav-state-badge" id="navStateBadge">IDLE</div>
+        <div class="row"><span>Speed</span><strong id="cmdSpeed">0.00 m/s</strong></div>
+        <div class="row"><span>Ang Rate</span><strong id="cmdAngRate">0.000 rad/s</strong></div>
+        <div class="row"><span>Distance</span><strong id="cmdDist">—</strong></div>
+        <div class="row"><span>Heading Err</span><strong id="cmdHErr">—</strong></div>
+        <div class="row"><span>Target Bearing</span><strong id="cmdBearing">—</strong></div>
+        <div class="row"><span>Waypoint</span><strong id="cmdWp">— / —</strong></div>
+      </div>
+
+      <!-- RTK section -->
+      <div class="card">
+        <h3>RTK Position</h3>
+        <div class="row"><span>Latitude</span><strong id="rtkLat">—</strong></div>
+        <div class="row"><span>Longitude</span><strong id="rtkLon">—</strong></div>
+        <div class="row"><span>Altitude</span><strong id="rtkAlt">—</strong></div>
+        <div class="row"><span>Fix</span><strong id="rtkFix">—</strong></div>
+        <div class="row"><span>Satellites</span><strong id="rtkSats">—</strong></div>
+        <div class="row"><span>HDOP</span><strong id="rtkHdop">—</strong></div>
+        <div class="row"><span>Speed</span><strong id="rtkSpeed">—</strong></div>
+        <div class="row"><span>Track</span><strong id="rtkTrack">—</strong></div>
+        <div class="row"><span>Source</span><strong id="rtkSource">—</strong></div>
+      </div>
+
+      <!-- IMU section -->
+      <div class="card">
+        <h3>IMU Attitude</h3>
+        <div class="row cal-row">
+          <span>Calibration</span>
+          <strong id="imuCal" class="cal-val">—</strong>
+        </div>
+        <div class="row"><span>Yaw</span><strong id="imuYaw">—</strong></div>
+        <div class="row"><span>Pitch</span><strong id="imuPitch">—</strong></div>
+        <div class="row"><span>Roll</span><strong id="imuRoll">—</strong></div>
+        <div class="row"><span>Accel X/Y/Z</span><strong id="imuAccel">—</strong></div>
+        <div class="row"><span>Gyro X/Y/Z</span><strong id="imuGyro">—</strong></div>
+        <div class="row"><span>Mag X/Y/Z</span><strong id="imuMag">—</strong></div>
+        <div class="row"><span>Data Rate</span><strong id="imuHz">—</strong></div>
+      </div>
+
+      <!-- Robot feedback section -->
+      <div class="card">
+        <h3>Robot Feedback</h3>
+        <div class="row">
+          <span>State</span>
+          <strong id="robotState" class="state-badge">—</strong>
+        </div>
+        <div class="row"><span>Meas Speed</span><strong id="robotSpeed">—</strong></div>
+        <div class="row"><span>Meas Ang Rate</span><strong id="robotAngRate">—</strong></div>
+        <div class="row"><span>SOC</span>
+          <span class="soc-wrap">
+            <strong id="robotSoc">—</strong>
+            <span class="soc-bar-bg"><span id="robotSocBar" class="soc-bar"></span></span>
+          </span>
+        </div>
+        <div class="row"><span>Serial</span><strong id="robotConn">—</strong></div>
+      </div>
+
+      <!-- Fused state section -->
+      <div class="card">
+        <h3>Fused State</h3>
+        <div class="row"><span>Heading (fused)</span><strong id="fusedHeading">—</strong></div>
+        <div class="row"><span>Speed (fused)</span><strong id="fusedSpeed">—</strong></div>
+        <div class="row"><span>Motion</span><strong id="fusedMotion">—</strong></div>
+      </div>
+
+    </aside>
+  </div>
+
+  <script>
+    function loadCss(href) {
+      return new Promise((resolve, reject) => {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = href;
+        link.onload = () => resolve(href);
+        link.onerror = () => reject(new Error('CSS load failed: ' + href));
+        document.head.appendChild(link);
+      });
+    }
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = src;
+        s.async = false;
+        s.onload = () => resolve(src);
+        s.onerror = () => reject(new Error('Script load failed: ' + src));
+        document.body.appendChild(s);
+      });
+    }
+    async function loadFirst(candidates, loader) {
+      let lastErr = null;
+      for (const c of candidates) {
+        try { return await loader(c); } catch (e) { lastErr = e; }
+      }
+      throw lastErr || new Error('No candidates');
+    }
+    async function boot() {
+      try {
+        await loadFirst(
+          ['./assets/vendor/leaflet/leaflet.css',
+           'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'],
+          loadCss
+        );
+        await loadFirst(
+          ['./assets/vendor/leaflet/leaflet.js',
+           'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'],
+          loadScript
+        );
+        await loadScript('nav_visualizer.js');
+      } catch (err) {
+        console.error(err);
+        document.body.innerHTML = '<p style="color:red;padding:20px">Map load failed: ' + err.message + '</p>';
+      }
+    }
+    boot();
+  </script>
+</body>
+</html>
