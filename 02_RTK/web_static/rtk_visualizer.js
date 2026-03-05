@@ -3,6 +3,11 @@ const WS_URL = `ws://${window.location.hostname}:${Number(window.location.port |
 
 const map = L.map('map').setView(DEFAULT_POS, 19);
 
+const offlineLayer = L.tileLayer('./assets/tiles/{z}/{x}/{y}.png', {
+  maxZoom: 20,
+  attribution: 'Offline tiles (LAN/local)',
+});
+
 const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 20,
   attribution: '&copy; OpenStreetMap contributors'
@@ -16,8 +21,21 @@ const esriSatLayer = L.tileLayer(
   }
 );
 
-esriSatLayer.addTo(map);
+offlineLayer.addTo(map);
+
+let hasSwitchedFromOffline = false;
+offlineLayer.on('tileerror', () => {
+  if (hasSwitchedFromOffline) return;
+  hasSwitchedFromOffline = true;
+  if (map.hasLayer(offlineLayer)) {
+    map.removeLayer(offlineLayer);
+  }
+  esriSatLayer.addTo(map);
+  addEvent('离线瓦片缺失，已自动切换到在线卫星图', '#b57812');
+});
+
 L.control.layers({
+  '离线地图 (LAN/本地)': offlineLayer,
   '卫星图 (Esri)': esriSatLayer,
   '普通地图 (OSM)': osmLayer,
 }).addTo(map);
@@ -28,7 +46,11 @@ const csvFile = document.getElementById('csvFile');
 const btnFindMe = document.getElementById('btnFindMe');
 const btnCenterCurrent = document.getElementById('btnCenterCurrent');
 const btnEditRoute = document.getElementById('btnEditRoute');
+const editRouteOptions = document.getElementById('editRouteOptions');
+const editTolerance = document.getElementById('editTolerance');
+const editMaxSpeed = document.getElementById('editMaxSpeed');
 const btnStartSim = document.getElementById('btnStartSim');
+const btnExportRoute = document.getElementById('btnExportRoute');
 const btnClearTrack = document.getElementById('btnClearTrack');
 const btnExportLog = document.getElementById('btnExportLog');
 
@@ -51,9 +73,40 @@ let isEditMode = false;
 let simPath = [];
 let simTimer = null;
 
+function waypointTooltipHtml(wp, idx) {
+  const reachedText = wp.reached ? 'yes' : 'no';
+  const reachedAt = wp.reached_at || '-';
+  const maxSpeed = wp.max_speed == null ? '-' : wp.max_speed;
+  return [
+    `ID: ${wp.id} (#${idx + 1})`,
+    `lat: ${Number(wp.lat).toFixed(8)}`,
+    `lon: ${Number(wp.lon).toFixed(8)}`,
+    `tolerance_m: ${wp.tolerance_m}`,
+    `max_speed: ${maxSpeed}`,
+    `reached: ${reachedText}`,
+    `reached_at: ${reachedAt}`,
+  ].join('<br/>');
+}
+
 function setField(id, value) {
   const el = document.getElementById(id);
   if (el) el.textContent = value;
+}
+
+function setEditOptionsVisible(visible) {
+  if (!editRouteOptions) return;
+  editRouteOptions.classList.toggle('show', visible);
+  editRouteOptions.setAttribute('aria-hidden', visible ? 'false' : 'true');
+}
+
+function getEditParams() {
+  const tolRaw = Number(editTolerance?.value);
+  const speedRaw = Number(editMaxSpeed?.value);
+  const tolerance = Number.isFinite(tolRaw) && tolRaw > 0 ? tolRaw : 0.5;
+  const maxSpeed = Number.isFinite(speedRaw) && speedRaw >= 0 ? speedRaw : 1;
+  if (editTolerance) editTolerance.value = tolerance.toString();
+  if (editMaxSpeed) editMaxSpeed.value = maxSpeed.toString();
+  return { tolerance, maxSpeed };
 }
 
 function addEvent(text, color = '#1b6c8d') {
@@ -163,7 +216,7 @@ function redrawWaypoints() {
       fillColor: '#cbd5e0',
       fillOpacity: 0.9,
     }).addTo(map);
-    m.bindTooltip(`ID ${w.id}<br/>tol=${w.tolerance_m}m`, { permanent: false });
+    m.bindTooltip(waypointTooltipHtml(w, idx), { permanent: false });
     waypointMarkers[idx] = m;
   });
 
@@ -194,6 +247,7 @@ function updateWaypointStyles(activeIdx) {
       fill = '#f6ad55';
     }
     m.setStyle({ color, fillColor: fill });
+    m.setTooltipContent(waypointTooltipHtml(wp, idx));
   });
 }
 
@@ -235,6 +289,30 @@ function exportLogs() {
   a.download = `rtk_log_${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function exportRouteCsv() {
+  if (!waypoints.length) {
+    addEvent('暂无路径可导出', '#6b7280');
+    return;
+  }
+  const header = ['id', 'lat', 'lon', 'tolerance_m', 'max_speed'];
+  const rows = waypoints.map((w, idx) => [
+    w.id ?? `${idx}`,
+    Number(w.lat).toFixed(8),
+    Number(w.lon).toFixed(8),
+    w.tolerance_m ?? 0.5,
+    w.max_speed ?? '',
+  ]);
+  const csv = [header, ...rows].map((line) => line.join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `route_${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  addEvent(`已导出路径点 ${waypoints.length} 个`, '#1f8f46');
 }
 
 function pushFrame(frame) {
@@ -431,12 +509,13 @@ function addWaypointByMapClick(e) {
   if (!isEditMode) return;
   const lat = Number(e.latlng.lat);
   const lon = Number(e.latlng.lng);
+  const { tolerance, maxSpeed } = getEditParams();
   waypoints.push({
     id: `${waypoints.length}`,
     lat,
     lon,
-    tolerance_m: 0.5,
-    max_speed: 1,
+    tolerance_m: tolerance,
+    max_speed: maxSpeed,
     reached: false,
     reached_at: null,
   });
@@ -446,13 +525,15 @@ function addWaypointByMapClick(e) {
 
 function toggleEditRoute() {
   isEditMode = !isEditMode;
+  setEditOptionsVisible(isEditMode);
   btnEditRoute.textContent = isEditMode ? '结束编辑' : '编辑路径';
   btnEditRoute.classList.toggle('active', isEditMode);
   if (isEditMode) {
+    const { tolerance, maxSpeed } = getEditParams();
     stopSimulation();
     waypoints = [];
     redrawWaypoints();
-    addEvent('编辑模式开启：点击地图添加点位', '#b57812');
+    addEvent(`编辑模式开启：点击地图添加点位 (tol=${tolerance}m, speed=${maxSpeed}m/s)`, '#b57812');
   } else {
     redrawWaypoints();
     addEvent(`编辑完成，已生成 ${waypoints.length} 个点位`, '#1b6c8d');
@@ -469,7 +550,18 @@ function findMe() {
     (pos) => {
       const lat = pos.coords.latitude;
       const lon = pos.coords.longitude;
+      const speedMps = Number.isFinite(pos.coords.speed) ? pos.coords.speed : null;
+      const speedKnots = speedMps == null ? null : speedMps / 0.514444;
       map.setView([lat, lon], 19);
+      pushFrame({
+        lat,
+        lon,
+        source: 'find_me',
+        fix_quality: 1,
+        num_sats: '',
+        hdop: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : '',
+        speed_knots: speedKnots,
+      });
       addEvent(`定位成功 ${lat.toFixed(7)}, ${lon.toFixed(7)}`, '#1f8f46');
     },
     (err) => addEvent(`定位失败: ${err.message}`, '#c23a27'),
@@ -503,11 +595,12 @@ btnFindMe.addEventListener('click', findMe);
 btnCenterCurrent.addEventListener('click', centerToCurrent);
 btnEditRoute.addEventListener('click', toggleEditRoute);
 btnStartSim.addEventListener('click', startSimulation);
+btnExportRoute.addEventListener('click', exportRouteCsv);
 btnClearTrack.addEventListener('click', clearTrack);
 btnExportLog.addEventListener('click', exportLogs);
 
 map.on('click', addWaypointByMapClick);
 
 addEvent('系统启动，默认位置已设定');
-addEvent('当前默认底图为卫星图');
+addEvent('当前默认底图为离线地图');
 connectWebSocket();

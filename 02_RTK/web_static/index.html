@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RTK 路径可视化</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -23,7 +22,16 @@
     <button id="btnFindMe">Find Me</button>
     <button id="btnCenterCurrent">回到当前位置</button>
     <button id="btnEditRoute">编辑路径</button>
+    <div id="editRouteOptions" class="edit-options" aria-hidden="true">
+      <label>tol(m)
+        <input type="number" id="editTolerance" min="0.1" step="0.1" value="0.5" />
+      </label>
+      <label>speed(m/s)
+        <input type="number" id="editMaxSpeed" min="0" step="0.1" value="1.0" />
+      </label>
+    </div>
     <button id="btnStartSim">开始模拟</button>
+    <button id="btnExportRoute">导出路径CSV</button>
     <button id="btnClearTrack">清空轨迹</button>
     <button id="btnExportLog">导出日志</button>
   </section>
@@ -54,7 +62,65 @@
     </aside>
   </main>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script src="rtk_visualizer.js"></script>
+  <script>
+    function loadCss(href) {
+      return new Promise((resolve, reject) => {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = href;
+        link.onload = () => resolve(href);
+        link.onerror = () => reject(new Error(`CSS load failed: ${href}`));
+        document.head.appendChild(link);
+      });
+    }
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = false;
+        script.onload = () => resolve(src);
+        script.onerror = () => reject(new Error(`Script load failed: ${src}`));
+        document.body.appendChild(script);
+      });
+    }
+
+    async function loadFirst(candidates, loader) {
+      let lastErr = null;
+      for (const c of candidates) {
+        try {
+          return await loader(c);
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      throw lastErr || new Error('No candidates');
+    }
+
+    async function boot() {
+      try {
+        await loadFirst(
+          [
+            './assets/vendor/leaflet/leaflet.css',
+            'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
+          ],
+          loadCss
+        );
+        await loadFirst(
+          [
+            './assets/vendor/leaflet/leaflet.js',
+            'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
+          ],
+          loadScript
+        );
+        await loadScript('rtk_visualizer.js');
+      } catch (err) {
+        console.error(err);
+        alert('地图组件加载失败：请确认离线 Leaflet 文件存在或网络可访问。');
+      }
+    }
+
+    boot();
+  </script>
 </body>
 </html>

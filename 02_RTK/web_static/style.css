@@ -46,6 +46,20 @@ h1 { margin: 0; font-size: 1.1rem; }
   flex-wrap: wrap;
 }
 
+.edit-options {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid #d5ddd6;
+  border-radius: 8px;
+  background: #fffdf7;
+}
+
+.edit-options.show {
+  display: inline-flex;
+}
+
 label {
   display: inline-flex;
   align-items: center;
