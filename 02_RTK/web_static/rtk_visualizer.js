@@ -29,7 +29,7 @@ const I18N = {
     distance: 'Target Distance',
     cardEvents: 'Events',
     allReached: 'All reached',
-    missingTiles: 'Offline tiles missing, switched to online satellite layer',
+    missingTiles: 'Satellite unavailable, switched to offline map',
     layerOffline: 'Offline Map (LAN/local)',
     layerSat: 'Satellite (Esri)',
     layerOsm: 'Street (OSM)',
@@ -53,7 +53,7 @@ const I18N = {
     loadedPoints: 'Loaded {count} route points',
     csvLoadFail: 'CSV load failed: {message}',
     boot1: 'System started, default location loaded',
-    boot2: 'Default base map is offline map',
+    boot2: 'Default base map is satellite map',
     langTitleZh: 'Switch to Chinese',
     langTitleEn: 'Switch to English',
   },
@@ -84,7 +84,7 @@ const I18N = {
     distance: '目标距离',
     cardEvents: '事件记录',
     allReached: '全部满足',
-    missingTiles: '离线瓦片缺失，已自动切换到在线卫星图',
+    missingTiles: '卫星图不可用，已自动切换到离线地图',
     layerOffline: '离线地图 (LAN/本地)',
     layerSat: '卫星图 (Esri)',
     layerOsm: '普通地图 (OSM)',
@@ -108,7 +108,7 @@ const I18N = {
     loadedPoints: '已加载路径点 {count} 个',
     csvLoadFail: 'CSV 加载失败: {message}',
     boot1: '系统启动，默认位置已设定',
-    boot2: '当前默认底图为离线地图',
+    boot2: '当前默认底图为卫星图',
     langTitleZh: '切换到中文',
     langTitleEn: 'Switch to English',
   }
@@ -140,17 +140,38 @@ const esriSatLayer = L.tileLayer(
   }
 );
 
-offlineLayer.addTo(map);
+let activeBaseLayer = null;
+function switchBaseLayer(nextLayer) {
+  if (activeBaseLayer === nextLayer) return;
+  [offlineLayer, esriSatLayer, osmLayer].forEach((layer) => {
+    if (map.hasLayer(layer)) map.removeLayer(layer);
+  });
+  nextLayer.addTo(map);
+  activeBaseLayer = nextLayer;
+}
 
-let hasSwitchedFromOffline = false;
-offlineLayer.on('tileerror', () => {
-  if (hasSwitchedFromOffline) return;
-  hasSwitchedFromOffline = true;
-  if (map.hasLayer(offlineLayer)) {
-    map.removeLayer(offlineLayer);
-  }
-  esriSatLayer.addTo(map);
+switchBaseLayer(esriSatLayer);
+
+let hasSwitchedToOffline = false;
+esriSatLayer.on('tileerror', () => {
+  if (hasSwitchedToOffline) return;
+  hasSwitchedToOffline = true;
+  switchBaseLayer(offlineLayer);
   addEvent(t('missingTiles'), '#b57812');
+});
+
+if (!navigator.onLine) {
+  switchBaseLayer(offlineLayer);
+}
+
+window.addEventListener('offline', () => {
+  switchBaseLayer(offlineLayer);
+});
+
+window.addEventListener('online', () => {
+  if (activeBaseLayer === offlineLayer) {
+    switchBaseLayer(esriSatLayer);
+  }
 });
 
 let baseLayerControl = null;
@@ -163,6 +184,9 @@ function renderLayerControl() {
   }).addTo(map);
 }
 renderLayerControl();
+map.on('baselayerchange', (e) => {
+  activeBaseLayer = e.layer;
+});
 
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
