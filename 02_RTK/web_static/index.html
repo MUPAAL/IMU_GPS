@@ -1,27 +1,28 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>RTK 路径可视化</title>
+  <title>RTK Path Visualizer</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header>
-    <h1>RTK 路径可视化</h1>
+    <h1 id="pageTitle">RTK Path Visualizer</h1>
     <div class="status">
       <span class="dot" id="statusDot"></span>
-      <span id="statusText">未连接</span>
+      <span id="statusText">Disconnected</span>
     </div>
+    <button id="langToggle" class="lang-toggle" title="Switch to Chinese" aria-label="Switch language">◌</button>
   </header>
 
   <section class="toolbar">
-    <label>CSV 路径文件
+    <label id="csvLabel">CSV Route File
       <input type="file" id="csvFile" accept=".csv,.txt" />
     </label>
     <button id="btnFindMe">Find Me</button>
-    <button id="btnCenterCurrent">回到当前位置</button>
-    <button id="btnEditRoute">编辑路径</button>
+    <button id="btnCenterCurrent">Center Current</button>
+    <button id="btnEditRoute">Edit Route</button>
     <div id="editRouteOptions" class="edit-options" aria-hidden="true">
       <label>tol(m)
         <input type="number" id="editTolerance" min="0.1" step="0.1" value="0.5" />
@@ -30,33 +31,33 @@
         <input type="number" id="editMaxSpeed" min="0" step="0.1" value="1.0" />
       </label>
     </div>
-    <button id="btnStartSim">开始模拟</button>
-    <button id="btnExportRoute">导出路径CSV</button>
-    <button id="btnClearTrack">清空轨迹</button>
-    <button id="btnExportLog">导出日志</button>
+    <button id="btnStartSim">Start Simulation</button>
+    <button id="btnExportRoute">Export Route CSV</button>
+    <button id="btnClearTrack">Clear Track</button>
+    <button id="btnExportLog">Export Log</button>
   </section>
 
   <main>
     <div id="map"></div>
     <aside>
       <div class="card">
-        <h3>当前位置</h3>
-        <div class="row"><span>纬度</span><strong id="latVal">-</strong></div>
-        <div class="row"><span>经度</span><strong id="lonVal">-</strong></div>
-        <div class="row"><span>来源</span><strong id="srcVal">-</strong></div>
+        <h3 id="cardCurrentTitle">Current Position</h3>
+        <div class="row"><span id="labelLat">Latitude</span><strong id="latVal">-</strong></div>
+        <div class="row"><span id="labelLon">Longitude</span><strong id="lonVal">-</strong></div>
+        <div class="row"><span id="labelSource">Source</span><strong id="srcVal">-</strong></div>
         <div class="row"><span>Fix</span><strong id="fixVal">-</strong></div>
-        <div class="row"><span>卫星</span><strong id="satVal">-</strong></div>
+        <div class="row"><span id="labelSats">Satellites</span><strong id="satVal">-</strong></div>
         <div class="row"><span>HDOP</span><strong id="hdopVal">-</strong></div>
-        <div class="row"><span>速度</span><strong id="spdVal">-</strong></div>
+        <div class="row"><span id="labelSpeed">Speed</span><strong id="spdVal">-</strong></div>
       </div>
       <div class="card">
-        <h3>任务进度</h3>
-        <div class="row"><span>已满足点位</span><strong id="reachVal">0 / 0</strong></div>
-        <div class="row"><span>当前目标</span><strong id="targetVal">-</strong></div>
-        <div class="row"><span>目标距离</span><strong id="distVal">-</strong></div>
+        <h3 id="cardMissionTitle">Mission Progress</h3>
+        <div class="row"><span id="labelReached">Reached Waypoints</span><strong id="reachVal">0 / 0</strong></div>
+        <div class="row"><span id="labelTarget">Current Target</span><strong id="targetVal">-</strong></div>
+        <div class="row"><span id="labelDistance">Target Distance</span><strong id="distVal">-</strong></div>
       </div>
       <div class="card">
-        <h3>事件记录</h3>
+        <h3 id="cardEventTitle">Events</h3>
         <ul id="eventList"></ul>
       </div>
     </aside>
@@ -116,7 +117,7 @@
         await loadScript('rtk_visualizer.js');
       } catch (err) {
         console.error(err);
-        alert('地图组件加载失败：请确认离线 Leaflet 文件存在或网络可访问。');
+        alert('Map component load failed: verify local Leaflet files or internet access.');
       }
     }
 

@@ -19,6 +19,7 @@ body {
 }
 
 header {
+  position: relative;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -29,6 +30,26 @@ header {
 
 h1 { margin: 0; font-size: 1.1rem; }
 .status { display: flex; gap: 8px; align-items: center; font-size: 0.9rem; }
+.lang-toggle {
+  position: absolute;
+  right: 8px;
+  top: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid #d8e0da;
+  background: rgba(255, 255, 255, 0.45);
+  color: #8da097;
+  font-size: 12px;
+  padding: 0;
+  opacity: 0.22;
+  transition: opacity 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+.lang-toggle:hover {
+  opacity: 0.72;
+  color: #5f7669;
+  border-color: #9db3a7;
+}
 .dot {
   width: 10px;
   height: 10px;

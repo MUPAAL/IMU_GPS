@@ -264,8 +264,8 @@ def parse_args() -> argparse.Namespace:
         description="BNO085 serial-to-WebSocket bridge"
     )
     parser.add_argument(
-        "--port", default="/dev/ttyACM0",
-        help="Serial port device (default: /dev/ttyACM0)"
+        "--port", default="/dev/cu.usbmodem1101",
+        help="Serial port device (linux: /dev/ttyACM0, find:ls /dev/cu.*)"
     )
     parser.add_argument(
         "--baud", type=int, default=921600,

@@ -1,5 +1,124 @@
 const DEFAULT_POS = [38.9412928598587, -92.31884600793728];
 const WS_URL = `ws://${window.location.hostname}:${Number(window.location.port || 8775) + 1}`;
+const LANG_KEY = 'rtk_ui_lang';
+const I18N = {
+  en: {
+    title: 'RTK Path Visualizer',
+    disconnected: 'Disconnected',
+    connected: 'Connected',
+    reconnecting: 'Disconnected, reconnecting in 3s',
+    csvLabel: 'CSV Route File',
+    findMe: 'Find Me',
+    centerCurrent: 'Center Current',
+    editRoute: 'Edit Route',
+    doneEdit: 'Finish Edit',
+    startSim: 'Start Simulation',
+    stopSim: 'Stop Simulation',
+    exportRoute: 'Export Route CSV',
+    clearTrack: 'Clear Track',
+    exportLog: 'Export Log',
+    cardCurrent: 'Current Position',
+    latitude: 'Latitude',
+    longitude: 'Longitude',
+    source: 'Source',
+    satellites: 'Satellites',
+    speed: 'Speed',
+    cardMission: 'Mission Progress',
+    reached: 'Reached Waypoints',
+    target: 'Current Target',
+    distance: 'Target Distance',
+    cardEvents: 'Events',
+    allReached: 'All reached',
+    missingTiles: 'Offline tiles missing, switched to online satellite layer',
+    layerOffline: 'Offline Map (LAN/local)',
+    layerSat: 'Satellite (Esri)',
+    layerOsm: 'Street (OSM)',
+    csvMissingLatLon: 'CSV missing lat/lon columns',
+    cleared: 'Track and logs cleared',
+    noLogs: 'No logs to export',
+    noRoute: 'No route to export',
+    routeExported: 'Exported {count} route points',
+    reachedWp: 'Waypoint {id} reached ({dist} m)',
+    wsConnected: 'WebSocket connected {url}',
+    simStopped: 'Simulation stopped',
+    simEmpty: 'No simulation path. Import CSV or edit route first',
+    simStarted: 'Simulation started, {count} points',
+    simDone: 'Simulation completed',
+    editOn: 'Edit mode on: click map to add points (tol={tolerance}m, speed={speed}m/s)',
+    editOff: 'Edit finished, generated {count} points',
+    geoUnsupported: 'Geolocation is not supported by this browser',
+    geoOk: 'Located {lat}, {lon}',
+    geoFail: 'Locate failed: {message}',
+    centered: 'Centered to current position {lat}, {lon}',
+    loadedPoints: 'Loaded {count} route points',
+    csvLoadFail: 'CSV load failed: {message}',
+    boot1: 'System started, default location loaded',
+    boot2: 'Default base map is offline map',
+    langTitleZh: 'Switch to Chinese',
+    langTitleEn: 'Switch to English',
+  },
+  zh: {
+    title: 'RTK 路径可视化',
+    disconnected: '未连接',
+    connected: '已连接',
+    reconnecting: '已断开，3 秒后重连',
+    csvLabel: 'CSV 路径文件',
+    findMe: '定位我',
+    centerCurrent: '回到当前位置',
+    editRoute: '编辑路径',
+    doneEdit: '结束编辑',
+    startSim: '开始模拟',
+    stopSim: '停止模拟',
+    exportRoute: '导出路径CSV',
+    clearTrack: '清空轨迹',
+    exportLog: '导出日志',
+    cardCurrent: '当前位置',
+    latitude: '纬度',
+    longitude: '经度',
+    source: '来源',
+    satellites: '卫星',
+    speed: '速度',
+    cardMission: '任务进度',
+    reached: '已满足点位',
+    target: '当前目标',
+    distance: '目标距离',
+    cardEvents: '事件记录',
+    allReached: '全部满足',
+    missingTiles: '离线瓦片缺失，已自动切换到在线卫星图',
+    layerOffline: '离线地图 (LAN/本地)',
+    layerSat: '卫星图 (Esri)',
+    layerOsm: '普通地图 (OSM)',
+    csvMissingLatLon: 'CSV 缺少 lat/lon 列',
+    cleared: '已清空轨迹与日志',
+    noLogs: '暂无日志可导出',
+    noRoute: '暂无路径可导出',
+    routeExported: '已导出路径点 {count} 个',
+    reachedWp: '点位 {id} 已满足 ({dist} m)',
+    wsConnected: 'WebSocket 已连接 {url}',
+    simStopped: '已停止模拟',
+    simEmpty: '没有可模拟路径，请先导入 CSV 或编辑路径',
+    simStarted: '开始模拟，共 {count} 个轨迹点',
+    simDone: '模拟完成',
+    editOn: '编辑模式开启：点击地图添加点位 (tol={tolerance}m, speed={speed}m/s)',
+    editOff: '编辑完成，已生成 {count} 个点位',
+    geoUnsupported: '浏览器不支持定位',
+    geoOk: '定位成功 {lat}, {lon}',
+    geoFail: '定位失败: {message}',
+    centered: '已回到当前位置 {lat}, {lon}',
+    loadedPoints: '已加载路径点 {count} 个',
+    csvLoadFail: 'CSV 加载失败: {message}',
+    boot1: '系统启动，默认位置已设定',
+    boot2: '当前默认底图为离线地图',
+    langTitleZh: '切换到中文',
+    langTitleEn: 'Switch to English',
+  }
+};
+let currentLang = localStorage.getItem(LANG_KEY) === 'zh' ? 'zh' : 'en';
+
+function t(key, vars = {}) {
+  const raw = I18N[currentLang][key] ?? I18N.en[key] ?? key;
+  return raw.replace(/\{(\w+)\}/g, (_, k) => `${vars[k] ?? ''}`);
+}
 
 const map = L.map('map').setView(DEFAULT_POS, 19);
 
@@ -31,17 +150,25 @@ offlineLayer.on('tileerror', () => {
     map.removeLayer(offlineLayer);
   }
   esriSatLayer.addTo(map);
-  addEvent('离线瓦片缺失，已自动切换到在线卫星图', '#b57812');
+  addEvent(t('missingTiles'), '#b57812');
 });
 
-L.control.layers({
-  '离线地图 (LAN/本地)': offlineLayer,
-  '卫星图 (Esri)': esriSatLayer,
-  '普通地图 (OSM)': osmLayer,
-}).addTo(map);
+let baseLayerControl = null;
+function renderLayerControl() {
+  if (baseLayerControl) map.removeControl(baseLayerControl);
+  baseLayerControl = L.control.layers({
+    [t('layerOffline')]: offlineLayer,
+    [t('layerSat')]: esriSatLayer,
+    [t('layerOsm')]: osmLayer,
+  }).addTo(map);
+}
+renderLayerControl();
 
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
+const pageTitle = document.getElementById('pageTitle');
+const csvLabel = document.getElementById('csvLabel');
+const langToggle = document.getElementById('langToggle');
 const csvFile = document.getElementById('csvFile');
 const btnFindMe = document.getElementById('btnFindMe');
 const btnCenterCurrent = document.getElementById('btnCenterCurrent');
@@ -53,6 +180,17 @@ const btnStartSim = document.getElementById('btnStartSim');
 const btnExportRoute = document.getElementById('btnExportRoute');
 const btnClearTrack = document.getElementById('btnClearTrack');
 const btnExportLog = document.getElementById('btnExportLog');
+const cardCurrentTitle = document.getElementById('cardCurrentTitle');
+const labelLat = document.getElementById('labelLat');
+const labelLon = document.getElementById('labelLon');
+const labelSource = document.getElementById('labelSource');
+const labelSats = document.getElementById('labelSats');
+const labelSpeed = document.getElementById('labelSpeed');
+const cardMissionTitle = document.getElementById('cardMissionTitle');
+const labelReached = document.getElementById('labelReached');
+const labelTarget = document.getElementById('labelTarget');
+const labelDistance = document.getElementById('labelDistance');
+const cardEventTitle = document.getElementById('cardEventTitle');
 
 let currentMarker = L.circleMarker(DEFAULT_POS, {
   radius: 8,
@@ -72,6 +210,41 @@ let logs = [];
 let isEditMode = false;
 let simPath = [];
 let simTimer = null;
+let connectionState = 'disconnected';
+
+function applyLanguage() {
+  document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en';
+  document.title = t('title');
+  pageTitle.textContent = t('title');
+  csvLabel.childNodes[0].nodeValue = `${t('csvLabel')} `;
+  btnFindMe.textContent = t('findMe');
+  btnCenterCurrent.textContent = t('centerCurrent');
+  btnEditRoute.textContent = isEditMode ? t('doneEdit') : t('editRoute');
+  btnStartSim.textContent = simTimer ? t('stopSim') : t('startSim');
+  btnExportRoute.textContent = t('exportRoute');
+  btnClearTrack.textContent = t('clearTrack');
+  btnExportLog.textContent = t('exportLog');
+  cardCurrentTitle.textContent = t('cardCurrent');
+  labelLat.textContent = t('latitude');
+  labelLon.textContent = t('longitude');
+  labelSource.textContent = t('source');
+  labelSats.textContent = t('satellites');
+  labelSpeed.textContent = t('speed');
+  cardMissionTitle.textContent = t('cardMission');
+  labelReached.textContent = t('reached');
+  labelTarget.textContent = t('target');
+  labelDistance.textContent = t('distance');
+  cardEventTitle.textContent = t('cardEvents');
+  if (connectionState === 'connected') {
+    statusText.textContent = t('connected');
+  } else if (connectionState === 'reconnecting') {
+    statusText.textContent = t('reconnecting');
+  } else {
+    statusText.textContent = t('disconnected');
+  }
+  langToggle.title = currentLang === 'zh' ? t('langTitleEn') : t('langTitleZh');
+  renderLayerControl();
+}
 
 function waypointTooltipHtml(wp, idx) {
   const reachedText = wp.reached ? 'yes' : 'no';
@@ -162,7 +335,7 @@ function parseCsvRows(text) {
     max_speed: headers.indexOf('max_speed'),
   };
 
-  if (col.lat < 0 || col.lon < 0) throw new Error('CSV 缺少 lat/lon 列');
+  if (col.lat < 0 || col.lon < 0) throw new Error(t('csvMissingLatLon'));
 
   return lines.slice(1).map((line, idx) => {
     const cells = splitLine(line).map((v) => v.trim());
@@ -266,12 +439,12 @@ function clearTrack() {
   trackSegments = [];
   trackPoints = [];
   logs = [];
-  addEvent('已清空轨迹与日志', '#6b7280');
+  addEvent(t('cleared'), '#6b7280');
 }
 
 function exportLogs() {
   if (!logs.length) {
-    addEvent('暂无日志可导出', '#6b7280');
+    addEvent(t('noLogs'), '#6b7280');
     return;
   }
   const header = [
@@ -293,7 +466,7 @@ function exportLogs() {
 
 function exportRouteCsv() {
   if (!waypoints.length) {
-    addEvent('暂无路径可导出', '#6b7280');
+    addEvent(t('noRoute'), '#6b7280');
     return;
   }
   const header = ['id', 'lat', 'lon', 'tolerance_m', 'max_speed'];
@@ -312,7 +485,7 @@ function exportRouteCsv() {
   a.download = `route_${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
   a.click();
   URL.revokeObjectURL(url);
-  addEvent(`已导出路径点 ${waypoints.length} 个`, '#1f8f46');
+  addEvent(t('routeExported', { count: waypoints.length }), '#1f8f46');
 }
 
 function pushFrame(frame) {
@@ -370,7 +543,7 @@ function updateByFrame(frame) {
         status = 'reached';
         wp.reached = true;
         wp.reached_at = new Date().toISOString();
-        addEvent(`点位 ${wp.id} 已满足 (${d.toFixed(2)} m)`, '#1f8f46');
+        addEvent(t('reachedWp', { id: wp.id, dist: d.toFixed(2) }), '#1f8f46');
       } else if (d <= wp.tolerance_m * 2) {
         color = '#b57812';
         status = 'approaching';
@@ -382,7 +555,7 @@ function updateByFrame(frame) {
       setField('targetVal', wp.id);
       setField('distVal', `${d.toFixed(2)} m`);
     } else {
-      setField('targetVal', '全部满足');
+      setField('targetVal', t('allReached'));
       setField('distVal', '-');
       if (targetCircle) {
         targetCircle.remove();
@@ -420,9 +593,10 @@ function connectWebSocket() {
   const ws = new WebSocket(WS_URL);
 
   ws.onopen = () => {
+    connectionState = 'connected';
     statusDot.style.background = '#1f8f46';
-    statusText.textContent = '已连接';
-    addEvent(`WebSocket 已连接 ${WS_URL}`, '#1f8f46');
+    statusText.textContent = t('connected');
+    addEvent(t('wsConnected', { url: WS_URL }), '#1f8f46');
   };
 
   ws.onmessage = (event) => {
@@ -436,8 +610,9 @@ function connectWebSocket() {
   };
 
   ws.onclose = () => {
+    connectionState = 'reconnecting';
     statusDot.style.background = '#c23a27';
-    statusText.textContent = '已断开，3 秒后重连';
+    statusText.textContent = t('reconnecting');
     setTimeout(connectWebSocket, 3000);
   };
 
@@ -458,17 +633,17 @@ function stopSimulation() {
     clearInterval(simTimer);
     simTimer = null;
   }
-  btnStartSim.textContent = '开始模拟';
+  btnStartSim.textContent = t('startSim');
 }
 
 function startSimulation() {
   if (simTimer) {
     stopSimulation();
-    addEvent('已停止模拟', '#6b7280');
+    addEvent(t('simStopped'), '#6b7280');
     return;
   }
   if (simPath.length < 2) {
-    addEvent('没有可模拟路径，请先导入 CSV 或编辑路径', '#c23a27');
+    addEvent(t('simEmpty'), '#c23a27');
     return;
   }
 
@@ -476,13 +651,13 @@ function startSimulation() {
   resetReachState();
 
   let i = 0;
-  btnStartSim.textContent = '停止模拟';
-  addEvent(`开始模拟，共 ${simPath.length} 个轨迹点`, '#1b6c8d');
+  btnStartSim.textContent = t('stopSim');
+  addEvent(t('simStarted', { count: simPath.length }), '#1b6c8d');
 
   simTimer = setInterval(() => {
     if (i >= simPath.length) {
       stopSimulation();
-      addEvent('模拟完成', '#1f8f46');
+      addEvent(t('simDone'), '#1f8f46');
       return;
     }
 
@@ -526,23 +701,23 @@ function addWaypointByMapClick(e) {
 function toggleEditRoute() {
   isEditMode = !isEditMode;
   setEditOptionsVisible(isEditMode);
-  btnEditRoute.textContent = isEditMode ? '结束编辑' : '编辑路径';
+  btnEditRoute.textContent = isEditMode ? t('doneEdit') : t('editRoute');
   btnEditRoute.classList.toggle('active', isEditMode);
   if (isEditMode) {
     const { tolerance, maxSpeed } = getEditParams();
     stopSimulation();
     waypoints = [];
     redrawWaypoints();
-    addEvent(`编辑模式开启：点击地图添加点位 (tol=${tolerance}m, speed=${maxSpeed}m/s)`, '#b57812');
+    addEvent(t('editOn', { tolerance, speed: maxSpeed }), '#b57812');
   } else {
     redrawWaypoints();
-    addEvent(`编辑完成，已生成 ${waypoints.length} 个点位`, '#1b6c8d');
+    addEvent(t('editOff', { count: waypoints.length }), '#1b6c8d');
   }
 }
 
 function findMe() {
   if (!navigator.geolocation) {
-    addEvent('浏览器不支持定位', '#c23a27');
+    addEvent(t('geoUnsupported'), '#c23a27');
     return;
   }
 
@@ -562,9 +737,9 @@ function findMe() {
         hdop: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : '',
         speed_knots: speedKnots,
       });
-      addEvent(`定位成功 ${lat.toFixed(7)}, ${lon.toFixed(7)}`, '#1f8f46');
+      addEvent(t('geoOk', { lat: lat.toFixed(7), lon: lon.toFixed(7) }), '#1f8f46');
     },
-    (err) => addEvent(`定位失败: ${err.message}`, '#c23a27'),
+    (err) => addEvent(t('geoFail', { message: err.message }), '#c23a27'),
     { enableHighAccuracy: true, timeout: 10000 }
   );
 }
@@ -572,7 +747,7 @@ function findMe() {
 function centerToCurrent() {
   const p = currentMarker.getLatLng();
   map.setView([p.lat, p.lng], Math.max(map.getZoom(), 19));
-  addEvent(`已回到当前位置 ${p.lat.toFixed(7)}, ${p.lng.toFixed(7)}`, '#1b6c8d');
+  addEvent(t('centered', { lat: p.lat.toFixed(7), lon: p.lng.toFixed(7) }), '#1b6c8d');
 }
 
 csvFile.addEventListener('change', async (ev) => {
@@ -585,9 +760,9 @@ csvFile.addEventListener('change', async (ev) => {
     resetReachState();
     redrawWaypoints();
     updateWaypointStyles(0);
-    addEvent(`已加载路径点 ${waypoints.length} 个`, '#1b6c8d');
+    addEvent(t('loadedPoints', { count: waypoints.length }), '#1b6c8d');
   } catch (err) {
-    addEvent(`CSV 加载失败: ${err.message}`, '#c23a27');
+    addEvent(t('csvLoadFail', { message: err.message }), '#c23a27');
   }
 });
 
@@ -601,6 +776,15 @@ btnExportLog.addEventListener('click', exportLogs);
 
 map.on('click', addWaypointByMapClick);
 
-addEvent('系统启动，默认位置已设定');
-addEvent('当前默认底图为离线地图');
+langToggle.addEventListener('click', () => {
+  currentLang = currentLang === 'zh' ? 'en' : 'zh';
+  localStorage.setItem(LANG_KEY, currentLang);
+  applyLanguage();
+});
+
+applyLanguage();
+connectionState = 'disconnected';
+statusText.textContent = t('disconnected');
+addEvent(t('boot1'));
+addEvent(t('boot2'));
 connectWebSocket();
