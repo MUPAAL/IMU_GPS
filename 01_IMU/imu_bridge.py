@@ -73,6 +73,7 @@ class IMUFrame:
     pitch: float | None = None
     yaw: float | None = None
     hz: float | None = None
+    north_offset_deg: float = 0.0              # north correction applied to yaw
     extra: dict = field(default_factory=dict)   # passthrough fields (cal, gyro, …)
 
     def to_dict(self) -> dict:
@@ -84,7 +85,8 @@ class IMUFrame:
             payload["euler"] = {
                 "roll": self.roll,
                 "pitch": self.pitch,
-                "yaw": self.yaw,
+                "yaw": self.yaw,                          # offset already applied
+                "north_offset_deg": self.north_offset_deg,
             }
         if self.hz is not None:
             payload["hz"] = self.hz
@@ -132,8 +134,19 @@ class IMUPipeline:
           → _serialize()     → JSON str
     """
 
-    def __init__(self, hz_tracker: FrameRateTracker) -> None:
+    def __init__(self, hz_tracker: FrameRateTracker, north_offset_deg: float = 0.0) -> None:
         self._hz_tracker = hz_tracker
+        self._north_offset_deg: float = north_offset_deg
+
+    @property
+    def north_offset_deg(self) -> float:
+        """Current north offset in degrees applied to yaw."""
+        return self._north_offset_deg
+
+    @north_offset_deg.setter
+    def north_offset_deg(self, value: float) -> None:
+        self._north_offset_deg = value
+        logger.info(f"North offset updated to {value:.2f} deg")
 
     # ── Public entry point ────────────────────────────────────────────────────
 
@@ -174,6 +187,7 @@ class IMUPipeline:
             qj=rot.get("qj", 0.0),
             qk=rot.get("qk", 0.0),
             qr=rot.get("qr", 1.0),
+            north_offset_deg=self._north_offset_deg,
             extra=extra,
         )
 
@@ -195,9 +209,10 @@ class IMUPipeline:
         cosy_cosp = 1.0 - 2.0 * (qj * qj + qk * qk)
         yaw = math.atan2(siny_cosp, cosy_cosp)
 
+        raw_yaw_deg = math.degrees(yaw)
         frame.roll = round(math.degrees(roll), 2)
         frame.pitch = round(math.degrees(pitch), 2)
-        frame.yaw = round(math.degrees(yaw), 2)
+        frame.yaw = round((raw_yaw_deg + self._north_offset_deg) % 360, 2)
         return frame
 
     def _enrich_hz(self, frame: IMUFrame) -> IMUFrame:
@@ -302,10 +317,16 @@ class WebSocketServer:
     a single cohesive class.
     """
 
-    def __init__(self, port: int, queue: asyncio.Queue) -> None:
+    def __init__(
+        self,
+        port: int,
+        queue: asyncio.Queue,
+        on_client_message=None,
+    ) -> None:
         self._port = port
         self._queue = queue
         self._clients: set = set()
+        self._on_client_message = on_client_message  # callable(str) | None
 
     async def broadcast(self) -> None:
         """Continuously dequeue messages and forward to all connected clients."""
@@ -336,7 +357,14 @@ class WebSocketServer:
         logger.info(f"WebSocket client connected: {addr}")
         self._clients.add(websocket)
         try:
-            await websocket.wait_closed()
+            async for raw in websocket:
+                if self._on_client_message is not None:
+                    try:
+                        self._on_client_message(raw)
+                    except Exception as exc:
+                        logger.warning(f"Error handling client message from {addr}: {exc}")
+        except websockets.exceptions.ConnectionClosed:
+            logger.debug(f"WebSocket connection closed normally for {addr}.")
         except Exception as exc:
             logger.warning(f"WebSocket handler error for {addr}: {exc}")
         finally:
@@ -400,12 +428,15 @@ class IMUBridge:
         baud: int,
         ws_port: int,
         static_dir: Path,
+        north_offset_deg: float = 0.0,
     ) -> None:
         self._serial_port = serial_port
         self._baud = baud
         self._http_port = ws_port          # HTTP port (user-facing)
         self._ws_port = ws_port + 1        # WebSocket port (browser auto-detects)
         self._static_dir = static_dir
+        self._north_offset_deg = north_offset_deg
+        self._pipeline: IMUPipeline | None = None  # set in _run_async
 
     def run(self) -> None:
         """Synchronous entry point — blocks until Ctrl-C."""
@@ -424,13 +455,13 @@ class IMUBridge:
 
         # -- Pipeline ----------------------------------------------------------
         hz_tracker = FrameRateTracker(window=50)
-        pipeline = IMUPipeline(hz_tracker)
+        self._pipeline = IMUPipeline(hz_tracker, north_offset_deg=self._north_offset_deg)
 
         # -- Serial reader thread ----------------------------------------------
         reader = SerialReader(
             port=self._serial_port,
             baud=self._baud,
-            pipeline=pipeline,
+            pipeline=self._pipeline,
             loop=loop,
             queue=queue,
         )
@@ -456,8 +487,32 @@ class IMUBridge:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 
         # -- WebSocket server (runs forever in event loop) ---------------------
-        ws_server = WebSocketServer(port=self._ws_port, queue=queue)
+        ws_server = WebSocketServer(
+            port=self._ws_port,
+            queue=queue,
+            on_client_message=self._handle_client_message,
+        )
         await ws_server.serve()
+
+    def _handle_client_message(self, raw: str) -> None:
+        """Parse and apply JSON control messages sent from the browser."""
+        try:
+            # ── INPUT ──────────────────────────────────────────────────────────
+            # north_offset_deg control messages arrive here from the browser.
+            # If the north offset control doesn't work, start debugging here.
+            msg = json.loads(raw)
+            # ───────────────────────────────────────────────────────────────────
+        except json.JSONDecodeError as exc:
+            logger.warning(f"Invalid JSON from browser client: {exc} | raw: {raw[:80]}")
+            return
+        if "set_north_offset" in msg:
+            if self._pipeline is None:
+                logger.warning("Pipeline not ready; ignoring set_north_offset.")
+                return
+            try:
+                self._pipeline.north_offset_deg = float(msg["set_north_offset"])
+            except (ValueError, TypeError) as exc:
+                logger.warning(f"Invalid set_north_offset value: {exc}")
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
@@ -483,6 +538,12 @@ def _parse_args() -> argparse.Namespace:
         default=8765,
         help="HTTP port for web UI; WebSocket uses ws-port+1 (default: 8765)",
     )
+    parser.add_argument(
+        "--north-offset",
+        type=float,
+        default=0.0,
+        help="Initial north offset in degrees applied to yaw (default: 0.0)",
+    )
     return parser.parse_args()
 
 
@@ -494,4 +555,5 @@ if __name__ == "__main__":
         baud=args.baud,
         ws_port=args.ws_port,
         static_dir=static_dir,
+        north_offset_deg=args.north_offset,
     ).run()

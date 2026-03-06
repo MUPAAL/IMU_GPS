@@ -153,10 +153,22 @@ const currentQuat = new THREE.Quaternion();  // starts at identity
 const targetQuat  = new THREE.Quaternion();
 
 // ========== Control state ==========
-let northOffsetDeg = 0;    // heading offset applied for true-north calibration
+let northOffsetDeg = 0;    // heading offset applied for true-north calibration (frontend sign: display = raw - offset)
 let rawHeadingDeg  = 0;    // latest raw (uncalibrated) heading from IMU
 let isPaused       = false; // whether to freeze live data updates
 let lockYawOnly    = false; // whether to show yaw only (strip pitch/roll)
+
+// ========== North offset sync helpers ==========
+// Server convention: corrected = raw + server_offset  (add)
+// Frontend convention: display  = raw - northOffsetDeg (subtract)
+// Conversion: northOffsetDeg = (360 - server_offset) % 360
+
+function sendNorthOffset(frontendOffsetDeg) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    const serverOffset = (360 - frontendOffsetDeg) % 360;
+    ws.send(JSON.stringify({ set_north_offset: serverOffset }));
+  }
+}
 
 // ========== Resize handler ==========
 function onResize() {
@@ -368,6 +380,11 @@ function connect() {
         targetQuat.premultiply(FRAME_CORRECTION);
       }
 
+      // Sync north offset from server (server is source of truth; convert sign convention)
+      if (data.euler?.north_offset_deg !== undefined) {
+        northOffsetDeg = (360 - data.euler.north_offset_deg) % 360;
+      }
+
       // Update data panel
       updatePanel(data);
     }
@@ -417,10 +434,12 @@ btnPause.addEventListener('click', () => {
 document.getElementById('btn-clear-north').addEventListener('click', () => {
   northOffsetDeg = 0;
   document.getElementById('manual-heading').value = 0;
+  sendNorthOffset(0);
 });
 
 // Set Heading manually (user says "IMU is currently pointing at X degrees")
 document.getElementById('btn-set-heading').addEventListener('click', () => {
   const userDeg = parseFloat(document.getElementById('manual-heading').value) || 0;
   northOffsetDeg = (rawHeadingDeg - userDeg + 360) % 360;
+  sendNorthOffset(northOffsetDeg);
 });
