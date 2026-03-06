@@ -29,6 +29,8 @@ Usage:
     # Browser: http://localhost:8785
 """
 
+# **************** IMPORTS ****************
+
 import argparse
 import asyncio
 import json
@@ -46,7 +48,7 @@ import websockets
 
 from robot_serial import RobotSerial
 
-# ── Logging ──────────────────────────────────────────────
+# **************** LOGGING SETUP ****************
 
 _py_name = Path(__file__).stem
 OUTPUT_PATH = Path(__file__).parent
@@ -62,49 +64,60 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ── Navigation constants ──────────────────────────────────
+# **************** NAVIGATION TUNING CONSTANTS ****************
 
-ARRIVAL_RADIUS_M = 1.0          # metres — distance to consider waypoint reached
-TURN_THRESHOLD_DEG = 15.0       # degrees — rotate in place if |heading_error| exceeds this
-MAX_SPEED_MS = 1.0              # m/s — maximum forward speed
-MAX_ANG_RATE_RADS = 0.8         # rad/s — maximum angular rate
-KP_ANG = 0.025                  # proportional gain: heading_error_deg → ang_rate_rads
-KD_ANG = 0.005                  # derivative gain for angular rate
-SLOWDOWN_DIST_M = 3.0           # metres — begin speed reduction within this distance
+ARRIVAL_RADIUS_M   = 1.0    # metres  — waypoint considered reached within this radius
+TURN_THRESHOLD_DEG = 15.0   # degrees — rotate in place if |heading_error| > threshold
+MAX_SPEED_MS       = 1.0    # m/s     — maximum allowed forward speed
+MAX_ANG_RATE_RADS  = 0.8    # rad/s   — angular rate clamp (both directions)
+KP_ANG             = 0.025  # PD P-gain: heading_error_deg → ang_rate_rads
+KD_ANG             = 0.005  # PD D-gain: rate of heading error change
+SLOWDOWN_DIST_M    = 3.0    # metres  — start decelerating when closer than this
 
-RECONNECT_DELAY_S = 3.0         # seconds between WebSocket reconnect attempts
-NAV_LOOP_HZ = 10.0              # navigation update rate
+RECONNECT_DELAY_S  = 3.0    # seconds — wait before retrying a dropped WebSocket
+NAV_LOOP_HZ        = 10.0   # Hz      — nav_loop tick rate
+DATA_STALE_S       = 5.0    # seconds — sensor data older than this is ignored
 
-# ── Shared state ─────────────────────────────────────────
+# **************** GLOBAL SHARED STATE ****************
+#
+#  Three coroutines write/read these via _state_lock:
+#    connect_imu_ws  → writes _imu_state, _imu_ts_last
+#    connect_rtk_ws  → writes _rtk_state, _rtk_ts_last
+#    nav_loop        → reads both, writes _fused, _wp_index, _nav_active
+#
+# _ws_clients and _robot are only modified in the event loop thread (no extra lock needed).
 
-_imu_state: dict = {}           # latest IMU frame from WS
-_rtk_state: dict = {}           # latest RTK frame from WS
-_imu_connected = False
-_rtk_connected = False
+_imu_state: dict = {}           # latest raw IMU frame received from WS (8766)
+_rtk_state: dict = {}           # latest raw RTK frame received from WS (8776)
+_imu_connected = False          # True while IMU WS connection is alive
+_rtk_connected = False          # True while RTK WS connection is alive
 
-_imu_ts_last = 0.0              # time.time() of last received IMU frame
-_rtk_ts_last = 0.0
+_imu_ts_last = 0.0              # time.time() of most recent IMU frame
+_rtk_ts_last = 0.0              # time.time() of most recent RTK frame
 
-_state_lock = threading.Lock()
+_state_lock = threading.Lock()  # protects _imu_state, _rtk_state, timestamps
 
-# Navigation state
-_waypoints: list[dict] = []     # [{"lat": ..., "lon": ...}, ...]
-_wp_index: int = 0              # current target waypoint index
-_nav_active: bool = False
+# Navigation planning state
+_waypoints: list[dict] = []     # ordered list of {"lat": ..., "lon": ...}
+_wp_index: int = 0              # index of the current target waypoint
+_nav_active: bool = False       # True when the robot should be navigating
 
-_last_heading_error: float = 0.0  # for derivative term
+_last_heading_error: float = 0.0  # previous-cycle error for PD derivative term
 
-# Fused output
-_fused: dict = {}               # latest broadcast payload
+# Fused output payload (built every nav_loop tick, broadcast by broadcast_loop)
+_fused: dict = {}
 
-# WebSocket clients
+# Connected web-client WebSocket objects
 _ws_clients: set = set()
 
-# Robot serial (optional)
+# Optional robot serial interface (None if --robot-port not provided)
 _robot: RobotSerial | None = None
 
+# Stop command string (defined here; also used inside nav_loop)
+CMD_STOP_STR = "V0.00,0.000\n"
 
-# ── Geo math ─────────────────────────────────────────────
+
+# **************** GEO MATH UTILITIES ****************
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Return great-circle distance in metres between two WGS-84 coordinates."""
@@ -118,7 +131,8 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 def bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """
-    Return initial bearing (degrees, 0=North, CW positive) from point 1 to point 2.
+    Return initial bearing in degrees from point 1 to point 2.
+    Convention: 0 = North, increases clockwise, range [0, 360).
     """
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dlam = math.radians(lon2 - lon1)
@@ -128,7 +142,7 @@ def bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def normalize_angle(deg: float) -> float:
-    """Normalize angle to [-180, 180] degrees."""
+    """Normalize an angle to the range [-180, 180] degrees."""
     deg = deg % 360.0
     if deg > 180.0:
         deg -= 360.0
@@ -137,8 +151,9 @@ def normalize_angle(deg: float) -> float:
 
 def quat_to_yaw(qi: float, qj: float, qk: float, qr: float) -> float:
     """
-    Extract yaw (heading) in degrees from BNO085 quaternion (i, j, k, r).
-    Convention: ZYX, returns value in [-180, 180].
+    Extract yaw from BNO085 quaternion (i, j, k, r).
+    Returns mathematical yaw in [-180, 180] degrees.
+    Convention: right-hand Z-up, 0 at +X, positive CCW.
     """
     siny_cosp = 2.0 * (qr * qk + qi * qj)
     cosy_cosp = 1.0 - 2.0 * (qj * qj + qk * qk)
@@ -162,12 +177,28 @@ def yaw_to_compass_heading(yaw_deg: float) -> float:
     return (90.0 - yaw_deg) % 360.0
 
 
-# ── IMU WebSocket client ──────────────────────────────────
+# ****************
+# **************** DATA INPUT: IMU WebSocket → _imu_state (8766 → this process)
+# ****************
 
 async def connect_imu_ws(uri: str) -> None:
     """
-    Persistent IMU WebSocket client.
-    Reconnects on disconnect with RECONNECT_DELAY_S delay.
+    Persistent async client for the IMU WebSocket server.
+
+    On each received message:
+      JSON frame → _imu_state (raw IMU data, used by nav_loop)
+
+    On disconnect: waits RECONNECT_DELAY_S then retries indefinitely.
+    Degradation: if this coroutine fails, nav_loop falls back to RTK track_deg for heading.
+
+    Expected incoming frame keys (from serial_bridge.py):
+      rot.qi/qj/qk/qr   — absolute orientation quaternion
+      euler.yaw/pitch/roll
+      lin_accel.x/y/z   — linear acceleration [m/s²]
+      gyro.x/y/z        — angular rate [rad/s]
+      mag.x/y/z         — magnetometer [µT]
+      cal                — calibration status 0-3
+      hz                 — measured data rate
     """
     global _imu_connected, _imu_state, _imu_ts_last
     while True:
@@ -179,9 +210,10 @@ async def connect_imu_ws(uri: str) -> None:
                 async for msg in ws:
                     try:
                         data = json.loads(msg)
+                        # ── INJECT received IMU frame into shared state ──
                         with _state_lock:
-                            _imu_state = data
-                            _imu_ts_last = time.time()
+                            _imu_state    = data
+                            _imu_ts_last  = time.time()
                     except json.JSONDecodeError as e:
                         logger.warning("IMU WS: invalid JSON: %s", e)
         except (websockets.ConnectionClosed, OSError) as e:
@@ -194,12 +226,27 @@ async def connect_imu_ws(uri: str) -> None:
         await asyncio.sleep(RECONNECT_DELAY_S)
 
 
-# ── RTK WebSocket client ──────────────────────────────────
+# ****************
+# **************** DATA INPUT: RTK WebSocket → _rtk_state (8776 → this process)
+# ****************
 
 async def connect_rtk_ws(uri: str) -> None:
     """
-    Persistent RTK WebSocket client.
-    Reconnects on disconnect with RECONNECT_DELAY_S delay.
+    Persistent async client for the RTK WebSocket server.
+
+    On each received message:
+      JSON frame → _rtk_state (raw RTK data, used by nav_loop)
+
+    On disconnect: waits RECONNECT_DELAY_S then retries indefinitely.
+    Degradation: if this coroutine fails, navigation pauses (no position).
+
+    Expected incoming frame keys (from rtk_bridge.py):
+      lat, lon, alt         — WGS-84 position
+      fix_quality           — 0=no fix, 1=GPS, 2=DGPS, 4=RTK fixed, 5=RTK float
+      num_sats, hdop        — satellite count and dilution of precision
+      speed_knots           — ground speed [knots]
+      track_deg             — true course over ground [degrees, 0=North]
+      source                — "rtk" or "default" (fallback position)
     """
     global _rtk_connected, _rtk_state, _rtk_ts_last
     while True:
@@ -211,9 +258,10 @@ async def connect_rtk_ws(uri: str) -> None:
                 async for msg in ws:
                     try:
                         data = json.loads(msg)
+                        # ── INJECT received RTK frame into shared state ──
                         with _state_lock:
-                            _rtk_state = data
-                            _rtk_ts_last = time.time()
+                            _rtk_state    = data
+                            _rtk_ts_last  = time.time()
                     except json.JSONDecodeError as e:
                         logger.warning("RTK WS: invalid JSON: %s", e)
         except (websockets.ConnectionClosed, OSError) as e:
@@ -226,7 +274,7 @@ async def connect_rtk_ws(uri: str) -> None:
         await asyncio.sleep(RECONNECT_DELAY_S)
 
 
-# ── Navigation loop ───────────────────────────────────────
+# **************** PD CONTROLLER ****************
 
 def _compute_command(
     current_heading: float,
@@ -234,12 +282,23 @@ def _compute_command(
     distance_m: float,
 ) -> tuple[float, float, str]:
     """
-    Compute (speed_ms, ang_rate_rads, nav_state_str) using PD heading control.
+    Compute velocity command using PD heading control.
+
+    Algorithm:
+      heading_error = normalize(target_bearing - current_heading)  [-180, 180]
+      ang_rate = Kp * error + Kd * d(error)/dt
+      if |error| > TURN_THRESHOLD_DEG: rotate in place (speed = 0)
+      else: forward with proportional slowdown near waypoint
+
+    Args:
+      current_heading  — robot compass heading [0, 360) degrees
+      target_bearing   — bearing to next waypoint [0, 360) degrees
+      distance_m       — distance to next waypoint [metres]
 
     Returns:
-        speed_ms        — linear velocity command [m/s]
-        ang_rate_rads   — angular velocity command [rad/s], left positive
-        nav_state_str   — "TURNING" | "NAVIGATING"
+      speed_ms        — linear velocity [m/s], >= 0
+      ang_rate_rads   — angular velocity [rad/s], left positive
+      nav_state_str   — "TURNING" | "NAVIGATING"
     """
     global _last_heading_error
 
@@ -251,73 +310,87 @@ def _compute_command(
     ang_rate = max(-MAX_ANG_RATE_RADS, min(MAX_ANG_RATE_RADS, ang_rate))
 
     if abs(heading_error) > TURN_THRESHOLD_DEG:
-        # Rotate in place
+        # Heading too far off — rotate in place, no forward motion
         return 0.0, ang_rate, "TURNING"
 
-    # Forward with proportional slowdown near waypoint
+    # Within acceptable heading band — move forward with deceleration ramp
     speed_factor = min(1.0, distance_m / SLOWDOWN_DIST_M)
     speed = MAX_SPEED_MS * speed_factor
-    speed = max(0.05, speed)  # minimum creep speed
+    speed = max(0.05, speed)  # minimum creep speed to avoid stall
 
     return speed, ang_rate, "NAVIGATING"
 
 
+# **************** NAVIGATION LOOP (core logic, 10 Hz) ****************
+
 async def nav_loop() -> None:
     """
-    Main navigation loop running at NAV_LOOP_HZ.
-    Fuses IMU + RTK, computes commands, sends to robot, updates _fused.
+    Main navigation coroutine — runs at NAV_LOOP_HZ (default 10 Hz).
+
+    Each tick:
+      1. Snapshot IMU + RTK state (thread-safe copy)
+      2. Extract heading: IMU quaternion yaw (priority) → RTK track_deg (fallback)
+      3. Extract position / speed from RTK
+      4. Classify motion state (STOPPED / MOVING / TURNING)
+      5. If nav active + position valid: compute distance/bearing to waypoint
+         a. If within ARRIVAL_RADIUS_M → advance to next waypoint
+         b. Else → _compute_command() → V command string
+      6. Send V command to robot (if serial connected)
+      7. Read robot O feedback
+      8. Assemble _fused payload → broadcast_loop picks it up
     """
     global _wp_index, _nav_active, _fused, _last_heading_error
 
     period = 1.0 / NAV_LOOP_HZ
-    DATA_STALE_S = 5.0  # seconds before sensor data is considered stale
 
     while True:
         now = time.time()
 
+        # ── Step 1: Snapshot shared state (thread-safe) ───
         with _state_lock:
-            imu = dict(_imu_state)
-            rtk = dict(_rtk_state)
+            imu       = dict(_imu_state)
+            rtk       = dict(_rtk_state)
             imu_fresh = (now - _imu_ts_last) < DATA_STALE_S
             rtk_fresh = (now - _rtk_ts_last) < DATA_STALE_S
 
-        # ── Extract IMU heading (priority) ────────────────
+        # ── Step 2: Heading fusion ─────────────────────────
+        #    Priority: IMU quaternion yaw (absolute, mag-referenced)
+        #    Fallback: RTK track_deg (only valid when moving)
         heading_deg = None
-        imu_cal = 0
+        imu_cal     = 0
 
         if imu_fresh and imu:
             try:
-                rot = imu.get("rot", {})
-                qi = rot.get("qi", 0.0)
-                qj = rot.get("qj", 0.0)
-                qk = rot.get("qk", 0.0)
-                qr = rot.get("qr", 1.0)
-                yaw_deg = quat_to_yaw(qi, qj, qk, qr)
+                rot        = imu.get("rot", {})
+                qi         = rot.get("qi", 0.0)
+                qj         = rot.get("qj", 0.0)
+                qk         = rot.get("qk", 0.0)
+                qr         = rot.get("qr", 1.0)
+                yaw_deg    = quat_to_yaw(qi, qj, qk, qr)
                 heading_deg = yaw_to_compass_heading(yaw_deg)
-                imu_cal = imu.get("cal", 0)
+                imu_cal    = imu.get("cal", 0)
             except Exception as e:
                 logger.warning("nav_loop: IMU heading extraction failed: %s", e)
 
-        # Fallback: RTK track_deg
         if heading_deg is None and rtk_fresh and rtk:
-            heading_deg = rtk.get("track_deg")
+            heading_deg = rtk.get("track_deg")   # degrees true north
 
-        # ── Extract RTK position ──────────────────────────
-        lat = rtk.get("lat") if rtk_fresh else None
-        lon = rtk.get("lon") if rtk_fresh else None
-        alt = rtk.get("alt")
+        # ── Step 3: RTK position and speed ────────────────
+        lat         = rtk.get("lat")          if rtk_fresh else None
+        lon         = rtk.get("lon")          if rtk_fresh else None
+        alt         = rtk.get("alt")
         fix_quality = rtk.get("fix_quality", 0)
         speed_knots = rtk.get("speed_knots")
-        track_deg = rtk.get("track_deg")
-        speed_ms = (speed_knots * 0.5144) if speed_knots is not None else 0.0
+        track_deg   = rtk.get("track_deg")
+        speed_ms    = (speed_knots * 0.5144)  if speed_knots is not None else 0.0
 
-        # ── Motion state ──────────────────────────────────
-        SPEED_THRESHOLD = 0.1  # m/s
-        ANG_THRESHOLD_DPS = 5.0  # deg/s
+        # ── Step 4: Motion state classification ───────────
+        SPEED_THRESHOLD   = 0.1   # m/s — below this → not translating
+        ANG_THRESHOLD_DPS = 5.0   # deg/s — above this → rotating
 
         gyro_z = 0.0
         if imu_fresh and imu:
-            gyro = imu.get("gyro", {})
+            gyro   = imu.get("gyro", {})
             gyro_z = abs(math.degrees(gyro.get("z", 0.0)))
 
         if speed_ms > SPEED_THRESHOLD:
@@ -327,45 +400,46 @@ async def nav_loop() -> None:
         else:
             motion = "STOPPED"
 
-        # ── Navigation planning ───────────────────────────
+        # ── Step 5: Waypoint navigation planning ──────────
         nav_info: dict = {
-            "active": _nav_active,
-            "waypoint_index": _wp_index,
-            "waypoints": _waypoints,
-            "distance_m": None,
-            "bearing_deg": None,
+            "active":            _nav_active,
+            "waypoint_index":    _wp_index,
+            "waypoints":         _waypoints,
+            "distance_m":        None,
+            "bearing_deg":       None,
             "heading_error_deg": None,
         }
 
+        # Default: issue stop command until overridden below
         cmd_info: dict = {
-            "v_cmd": CMD_STOP_STR,
-            "speed_ms": 0.0,
-            "ang_rate_rads": 0.0,
+            "v_cmd":             CMD_STOP_STR,
+            "speed_ms":          0.0,
+            "ang_rate_rads":     0.0,
             "heading_error_deg": 0.0,
-            "distance_m": None,
-            "target_waypoint": _wp_index,
-            "total_waypoints": len(_waypoints),
-            "nav_state": "IDLE",
+            "distance_m":        None,
+            "target_waypoint":   _wp_index,
+            "total_waypoints":   len(_waypoints),
+            "nav_state":         "IDLE",
         }
 
         if _nav_active and lat is not None and lon is not None and heading_deg is not None:
             if _wp_index < len(_waypoints):
-                wp = _waypoints[_wp_index]
+                wp   = _waypoints[_wp_index]
                 dist = haversine_m(lat, lon, wp["lat"], wp["lon"])
-                brg = bearing_deg(lat, lon, wp["lat"], wp["lon"])
+                brg  = bearing_deg(lat, lon, wp["lat"], wp["lon"])
                 h_err = normalize_angle(brg - heading_deg)
 
-                nav_info["distance_m"] = round(dist, 2)
-                nav_info["bearing_deg"] = round(brg, 2)
-                nav_info["heading_error_deg"] = round(h_err, 2)
+                nav_info["distance_m"]        = round(dist, 2)
+                nav_info["bearing_deg"]        = round(brg,  2)
+                nav_info["heading_error_deg"]  = round(h_err, 2)
 
-                cmd_info["distance_m"] = round(dist, 2)
+                cmd_info["distance_m"]        = round(dist, 2)
                 cmd_info["heading_error_deg"] = round(h_err, 2)
-                cmd_info["target_waypoint"] = _wp_index
-                cmd_info["total_waypoints"] = len(_waypoints)
+                cmd_info["target_waypoint"]   = _wp_index
+                cmd_info["total_waypoints"]   = len(_waypoints)
 
                 if dist < ARRIVAL_RADIUS_M:
-                    # Waypoint reached
+                    # Waypoint reached — advance index
                     logger.info(
                         "nav_loop: waypoint %d reached (dist=%.2f m)", _wp_index, dist
                     )
@@ -375,100 +449,103 @@ async def nav_loop() -> None:
                     if _wp_index >= len(_waypoints):
                         logger.info("nav_loop: all waypoints reached, navigation complete")
                         _nav_active = False
-                        cmd_info["nav_state"] = "ARRIVED"
-                    else:
-                        cmd_info["nav_state"] = "ARRIVED"
+
+                    cmd_info["nav_state"] = "ARRIVED"
+
                 else:
+                    # Compute motion command toward waypoint
                     spd, ang, nav_st = _compute_command(heading_deg, brg, dist)
                     v_cmd = f"V{spd:.2f},{ang:.3f}\n"
                     cmd_info.update({
-                        "v_cmd": v_cmd,
-                        "speed_ms": round(spd, 3),
-                        "ang_rate_rads": round(ang, 4),
-                        "nav_state": nav_st,
+                        "v_cmd":          v_cmd,
+                        "speed_ms":       round(spd, 3),
+                        "ang_rate_rads":  round(ang, 4),
+                        "nav_state":      nav_st,
                     })
             else:
                 _nav_active = False
                 cmd_info["nav_state"] = "ARRIVED"
-        elif not _nav_active:
-            cmd_info["nav_state"] = "IDLE"
-        else:
-            # No position/heading available — hold stop
-            cmd_info["nav_state"] = "IDLE"
 
-        # ── Send command to robot ─────────────────────────
+        # nav_state defaults to "IDLE" when !_nav_active or no position available
+
+        # ── Step 6: Send V command to robot ───────────────
         if _robot is not None:
             _robot.send_velocity(cmd_info["speed_ms"], cmd_info["ang_rate_rads"])
 
-        # ── Robot feedback ────────────────────────────────
+        # ── Step 7: Read robot O feedback ─────────────────
         robot_info: dict = {
-            "meas_speed_ms": 0.0,
+            "meas_speed_ms":      0.0,
             "meas_ang_rate_rads": 0.0,
-            "state": 0,
-            "state_name": "UNKNOWN",
-            "soc": 0,
-            "connected": False,
+            "state":              0,
+            "state_name":         "UNKNOWN",
+            "soc":                0,
+            "connected":          False,
         }
         if _robot is not None:
             robot_info = _robot.get_feedback()
 
-        # ── Build broadcast payload ───────────────────────
+        # ── Step 8: Assemble _fused payload ───────────────
         payload = {
             "ts": now,
             "state": {
-                "lat": lat,
-                "lon": lon,
-                "alt": alt,
+                "lat":         lat,
+                "lon":         lon,
+                "alt":         alt,
                 "heading_deg": round(heading_deg, 2) if heading_deg is not None else None,
-                "speed_ms": round(speed_ms, 3),
+                "speed_ms":    round(speed_ms, 3),
                 "fix_quality": fix_quality,
-                "track_deg": track_deg,
-                "motion": motion,
-                "imu_cal": imu_cal,
+                "track_deg":   track_deg,
+                "motion":      motion,
+                "imu_cal":     imu_cal,
             },
             "imu_raw": {
-                "euler": imu.get("euler", {}),
-                "rot": imu.get("rot", {}),
+                "euler":     imu.get("euler",     {}),
+                "rot":       imu.get("rot",       {}),
                 "lin_accel": imu.get("lin_accel", {}),
-                "gyro": imu.get("gyro", {}),
-                "mag": imu.get("mag", {}),
-                "cal": imu_cal,
-                "hz": imu.get("hz", 0),
+                "gyro":      imu.get("gyro",      {}),
+                "mag":       imu.get("mag",       {}),
+                "cal":       imu_cal,
+                "hz":        imu.get("hz", 0),
             } if imu_fresh and imu else {},
             "rtk_raw": {
-                "lat": lat,
-                "lon": lon,
-                "alt": alt,
+                "lat":         lat,
+                "lon":         lon,
+                "alt":         alt,
                 "fix_quality": fix_quality,
-                "num_sats": rtk.get("num_sats", 0),
-                "hdop": rtk.get("hdop"),
+                "num_sats":    rtk.get("num_sats", 0),
+                "hdop":        rtk.get("hdop"),
                 "speed_knots": speed_knots,
-                "speed_ms": round(speed_ms, 3),
-                "track_deg": track_deg,
-                "source": rtk.get("source", "unknown"),
+                "speed_ms":    round(speed_ms, 3),
+                "track_deg":   track_deg,
+                "source":      rtk.get("source", "unknown"),
             } if rtk_fresh and rtk else {},
-            "nav": nav_info,
-            "cmd": cmd_info,
-            "robot": robot_info,
+            "nav":    nav_info,
+            "cmd":    cmd_info,
+            "robot":  robot_info,
             "source": {
-                "imu": imu_fresh and bool(imu),
-                "rtk": rtk_fresh and bool(rtk),
+                "imu":   imu_fresh and bool(imu),
+                "rtk":   rtk_fresh and bool(rtk),
                 "robot": robot_info.get("connected", False),
             },
         }
 
-        _fused = payload
+        _fused = payload   # broadcast_loop will send this to all web clients
 
         await asyncio.sleep(period)
 
 
-CMD_STOP_STR = "V0.00,0.000\n"
-
-
-# ── WebSocket server ──────────────────────────────────────
+# ****************
+# **************** DATA INPUT: Web client → nav_bridge (commands from browser)
+# ****************
 
 async def ws_handler(websocket) -> None:
-    """Handle incoming WebSocket connections from web clients."""
+    """
+    Handle a new WebSocket connection from the web client (browser).
+
+    Registers the connection in _ws_clients so broadcast_loop can push data.
+    Passes every incoming message to _handle_client_message().
+    Cleans up on disconnect.
+    """
     addr = websocket.remote_address
     logger.info("Nav WS: client connected: %s", addr)
     _ws_clients.add(websocket)
@@ -486,8 +563,19 @@ async def ws_handler(websocket) -> None:
 
 async def _handle_client_message(msg: str, ws) -> None:
     """
-    Process messages from web clients.
-    Expected types: set_waypoints, start_nav, stop_nav, clear_waypoints.
+    Dispatch incoming JSON commands from the browser.
+
+    Supported message types and their effect on navigation state:
+      set_waypoints   → replace _waypoints list, reset index
+      start_nav       → set _nav_active = True, reset index
+      stop_nav        → set _nav_active = False (robot stops on next tick)
+      clear_waypoints → empty _waypoints, stop navigation
+
+    Expected JSON format:
+      {"type": "set_waypoints", "waypoints": [{"lat": ..., "lon": ...}, ...]}
+      {"type": "start_nav"}
+      {"type": "stop_nav"}
+      {"type": "clear_waypoints"}
     """
     global _waypoints, _wp_index, _nav_active, _last_heading_error
 
@@ -500,9 +588,9 @@ async def _handle_client_message(msg: str, ws) -> None:
     msg_type = data.get("type", "")
 
     if msg_type == "set_waypoints":
-        wps = data.get("waypoints", [])
+        wps        = data.get("waypoints", [])
         _waypoints = [{"lat": float(w["lat"]), "lon": float(w["lon"])} for w in wps]
-        _wp_index = 0
+        _wp_index  = 0
         _last_heading_error = 0.0
         logger.info("Nav WS: set_waypoints: %d waypoints", len(_waypoints))
 
@@ -511,7 +599,7 @@ async def _handle_client_message(msg: str, ws) -> None:
             logger.warning("Nav WS: start_nav called with no waypoints")
         else:
             _nav_active = True
-            _wp_index = 0
+            _wp_index   = 0
             _last_heading_error = 0.0
             logger.info("Nav WS: navigation started (%d waypoints)", len(_waypoints))
 
@@ -520,8 +608,8 @@ async def _handle_client_message(msg: str, ws) -> None:
         logger.info("Nav WS: navigation stopped by client")
 
     elif msg_type == "clear_waypoints":
-        _waypoints = []
-        _wp_index = 0
+        _waypoints  = []
+        _wp_index   = 0
         _nav_active = False
         _last_heading_error = 0.0
         logger.info("Nav WS: waypoints cleared")
@@ -530,12 +618,30 @@ async def _handle_client_message(msg: str, ws) -> None:
         logger.warning("Nav WS: unknown message type: %r", msg_type)
 
 
+# ****************
+# **************** DATA OUTPUT: _fused → all web clients (this process → browser)
+# ****************
+
 async def broadcast_loop(hz: float) -> None:
-    """Broadcast latest _fused state to all connected web clients."""
+    """
+    Push the latest _fused payload to every connected web client at `hz` Hz.
+
+    Dead connections are silently removed from _ws_clients.
+
+    Broadcast JSON structure (see nav_loop Step 8 for full schema):
+      ts       — Unix timestamp
+      state    — fused position / heading / speed / motion
+      imu_raw  — raw IMU fields (euler, rot, accel, gyro, mag, cal, hz)
+      rtk_raw  — raw RTK fields (lat, lon, fix, sats, hdop, speed, track)
+      nav      — waypoint progress (active, index, distance, bearing, error)
+      cmd      — V command + nav_state (IDLE / NAVIGATING / TURNING / ARRIVED)
+      robot    — O feedback (meas_speed, meas_ang_rate, state, soc, connected)
+      source   — boolean flags: imu/rtk/robot data freshness
+    """
     period = 1.0 / max(hz, 0.5)
     while True:
         if _ws_clients and _fused:
-            msg = json.dumps(_fused)
+            msg  = json.dumps(_fused)
             dead: set = set()
             for ws in _ws_clients.copy():
                 try:
@@ -546,10 +652,13 @@ async def broadcast_loop(hz: float) -> None:
         await asyncio.sleep(period)
 
 
-# ── HTTP server ───────────────────────────────────────────
+# **************** HTTP SERVER (static web UI) ****************
 
 def start_http_server(static_dir: Path, http_port: int) -> None:
-    """Serve static files from static_dir on http_port."""
+    """
+    Serve the nav web UI from web_static/ directory.
+    Runs in a dedicated daemon thread (not the asyncio loop).
+    """
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(static_dir), **kwargs)
@@ -563,12 +672,19 @@ def start_http_server(static_dir: Path, http_port: int) -> None:
         httpd.serve_forever()
 
 
-# ── Main ─────────────────────────────────────────────────
+# **************** MAIN ENTRY POINT ****************
 
 async def main_async(args: argparse.Namespace) -> None:
+    """
+    Bootstrap sequence:
+      1. Open robot serial (optional)
+      2. Start HTTP server thread
+      3. Launch async tasks: IMU WS client, RTK WS client, nav_loop, broadcast_loop
+      4. Start nav WebSocket server and await forever
+    """
     global _robot
 
-    # Start robot serial (optional)
+    # ── 1. Robot serial (optional) ────────────────────────
     if args.robot_port:
         _robot = RobotSerial(args.robot_port, args.robot_baud)
         ok = _robot.start()
@@ -578,7 +694,7 @@ async def main_async(args: argparse.Namespace) -> None:
     else:
         logger.info("No --robot-port specified, robot serial disabled")
 
-    # Start HTTP server
+    # ── 2. HTTP server ────────────────────────────────────
     static_dir = Path(__file__).parent / "web_static"
     if static_dir.exists():
         t = threading.Thread(
@@ -599,15 +715,16 @@ async def main_async(args: argparse.Namespace) -> None:
         url = f"http://localhost:{args.nav_port}"
         threading.Timer(1.5, lambda: webbrowser.open(url)).start()
 
-    # Launch async tasks
-    asyncio.create_task(connect_imu_ws(args.imu_ws))
-    asyncio.create_task(connect_rtk_ws(args.rtk_ws))
-    asyncio.create_task(nav_loop())
-    asyncio.create_task(broadcast_loop(args.hz))
+    # ── 3. Launch async tasks ─────────────────────────────
+    asyncio.create_task(connect_imu_ws(args.imu_ws))    # IMU subscriber
+    asyncio.create_task(connect_rtk_ws(args.rtk_ws))    # RTK subscriber
+    asyncio.create_task(nav_loop())                      # fusion + planning
+    asyncio.create_task(broadcast_loop(args.hz))         # web push
 
+    # ── 4. WebSocket server (accepts browser connections) ──
     async with websockets.serve(ws_handler, "0.0.0.0", ws_port):
         logger.info("Nav bridge running. Press Ctrl+C to stop.")
-        await asyncio.Future()
+        await asyncio.Future()   # run forever
 
 
 def parse_args() -> argparse.Namespace:
@@ -653,6 +770,8 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
+
+# **************** SCRIPT ENTRY ****************
 
 if __name__ == "__main__":
     args = parse_args()

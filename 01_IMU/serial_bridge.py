@@ -8,6 +8,8 @@ Usage:
     python serial_bridge.py --port /dev/ttyACM0 --baud 921600 --ws-port 8765
 """
 
+# **************** IMPORTS ****************
+
 import asyncio
 import json
 import logging
@@ -24,7 +26,8 @@ import socketserver
 import serial
 import websockets
 
-# ---------- Logging setup ----------
+# **************** LOGGING SETUP ****************
+
 _py_name = Path(__file__).stem
 OUTPUT_PATH = Path(__file__).parent
 log_file_name = OUTPUT_PATH / f"{_py_name}.log"
@@ -39,37 +42,44 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ---------- Globals ----------
-connected_clients: set = set()
-data_queue: asyncio.Queue = None  # initialized in main
-_loop: asyncio.AbstractEventLoop = None
+# **************** GLOBAL STATE ****************
 
-# Stats for Hz calculation
+connected_clients: set = set()          # all live WebSocket connections from browsers
+data_queue: asyncio.Queue = None        # inter-thread pipe: serial thread → asyncio loop
+_loop: asyncio.AbstractEventLoop = None # reference held by serial thread for thread-safe put
+
+# Rolling window for frame-rate calculation
 _frame_times: list = []
-_FRAME_WINDOW = 50  # rolling window for Hz calculation
+_FRAME_WINDOW = 50   # keep the last N timestamps to compute average Hz
 
+# **************** EULER ANGLE COMPUTATION ****************
 
-# ---------- Euler angle computation ----------
 def quaternion_to_euler(qi: float, qj: float, qk: float, qr: float) -> dict:
     """
-    Convert quaternion (i, j, k, r) to Euler angles in degrees.
-    Returns dict with roll, pitch, yaw in degrees.
+    Convert BNO085 rotation-vector quaternion (i, j, k, r) to Euler angles.
 
-    Convention: ZYX intrinsic (yaw-pitch-roll), right-hand coordinate system.
+    Convention: ZYX intrinsic (yaw → pitch → roll), right-hand coordinate system.
+    Returns a dict with roll / pitch / yaw in degrees, rounded to 2 decimal places.
+
+    BNO085 quaternion field mapping:
+      qi → x component
+      qj → y component
+      qk → z component
+      qr → w (scalar) component
     """
-    # Roll (rotation around X-axis)
+    # Roll — rotation around X-axis
     sinr_cosp = 2.0 * (qr * qi + qj * qk)
     cosr_cosp = 1.0 - 2.0 * (qi * qi + qj * qj)
     roll = math.atan2(sinr_cosp, cosr_cosp)
 
-    # Pitch (rotation around Y-axis)
+    # Pitch — rotation around Y-axis (clamped at ±90° to avoid gimbal lock singularity)
     sinp = 2.0 * (qr * qj - qk * qi)
     if abs(sinp) >= 1.0:
-        pitch = math.copysign(math.pi / 2.0, sinp)  # clamp to ±90°
+        pitch = math.copysign(math.pi / 2.0, sinp)
     else:
         pitch = math.asin(sinp)
 
-    # Yaw (rotation around Z-axis)
+    # Yaw — rotation around Z-axis
     siny_cosp = 2.0 * (qr * qk + qi * qj)
     cosy_cosp = 1.0 - 2.0 * (qj * qj + qk * qk)
     yaw = math.atan2(siny_cosp, cosy_cosp)
@@ -81,8 +91,13 @@ def quaternion_to_euler(qi: float, qj: float, qk: float, qr: float) -> dict:
     }
 
 
+# **************** HZ CALCULATION ****************
+
 def compute_hz() -> float:
-    """Return rolling-average Hz over last _FRAME_WINDOW frames."""
+    """
+    Return rolling-average frame rate over the last _FRAME_WINDOW frames.
+    Called once per received serial frame; updates _frame_times in-place.
+    """
     global _frame_times
     now = time.monotonic()
     _frame_times.append(now)
@@ -96,12 +111,33 @@ def compute_hz() -> float:
     return round((len(_frame_times) - 1) / elapsed, 1)
 
 
-# ---------- Serial reader thread ----------
+# ****************
+# **************** DATA INPUT: ESP32 serial RX → data_queue (hardware → this process)
+# ****************
+
 def serial_reader_thread(port: str, baud: int, loop: asyncio.AbstractEventLoop,
                           queue: asyncio.Queue) -> None:
     """
-    Blocking thread: reads lines from serial port, validates JSON,
-    enriches with Euler angles + Hz, then puts to asyncio queue.
+    Blocking daemon thread: reads JSON lines from ESP32-C3 serial port.
+
+    Per-frame processing pipeline:
+      1. readline() from serial port
+      2. Skip comment lines (start with '#') and non-JSON lines
+      3. json.loads() — discard malformed lines with a warning
+      4. Validate 'rot' field presence (mandatory for orientation)
+      5. quaternion_to_euler() — compute roll/pitch/yaw and attach as frame["euler"]
+      6. compute_hz()          — attach live frame rate as frame["hz"]
+      7. asyncio.run_coroutine_threadsafe(queue.put(frame), loop)
+         → hands enriched frame to the asyncio event loop
+
+    On serial open failure or read error: logs error, waits 3 s, retries forever.
+
+    Expected JSON frame fields from ESP32 firmware:
+      rot.qi / qj / qk / qr  — rotation vector quaternion
+      lin_accel.x / y / z    — linear acceleration [m/s²]
+      gyro.x / y / z         — angular rate [rad/s]
+      mag.x / y / z          — magnetometer [µT]
+      cal                     — calibration status 0–3
     """
     logger.info(f"Opening serial port {port} at {baud} baud.")
     while True:
@@ -115,7 +151,7 @@ def serial_reader_thread(port: str, baud: int, loop: asyncio.AbstractEventLoop,
                             continue
                         line = raw.decode("utf-8", errors="replace").strip()
 
-                        # Skip comment lines from firmware
+                        # Skip firmware comment lines and non-JSON output
                         if line.startswith("#") or not line.startswith("{"):
                             continue
 
@@ -125,12 +161,12 @@ def serial_reader_thread(port: str, baud: int, loop: asyncio.AbstractEventLoop,
                             logger.warning(f"JSON parse error: {e} | raw: {line[:80]}")
                             continue
 
-                        # Validate required fields
+                        # Require rotation vector to be present
                         if "rot" not in frame:
                             logger.warning("Frame missing 'rot' field, skipping.")
                             continue
 
-                        # Compute Euler angles from rotation vector quaternion
+                        # Enrich frame with derived fields
                         rot = frame["rot"]
                         euler = quaternion_to_euler(
                             rot.get("qi", 0.0),
@@ -138,10 +174,10 @@ def serial_reader_thread(port: str, baud: int, loop: asyncio.AbstractEventLoop,
                             rot.get("qk", 0.0),
                             rot.get("qr", 1.0),
                         )
-                        frame["euler"] = euler
-                        frame["hz"] = compute_hz()
+                        frame["euler"] = euler          # attach Euler angles
+                        frame["hz"]    = compute_hz()   # attach live frame rate
 
-                        # Put into asyncio queue (thread-safe)
+                        # ── INJECT enriched frame into asyncio queue ──────────
                         asyncio.run_coroutine_threadsafe(queue.put(frame), loop)
 
                     except serial.SerialException as e:
@@ -159,9 +195,27 @@ def serial_reader_thread(port: str, baud: int, loop: asyncio.AbstractEventLoop,
         time.sleep(3.0)
 
 
-# ---------- WebSocket broadcaster ----------
+# ****************
+# **************** DATA OUTPUT: data_queue → all web clients (this process → browser)
+# ****************
+
 async def broadcaster(queue: asyncio.Queue) -> None:
-    """Consume queue and broadcast JSON to all connected WebSocket clients."""
+    """
+    Asyncio coroutine: drains data_queue and pushes each frame to every
+    connected browser WebSocket client.
+
+    Dead connections (ConnectionClosed or send error) are collected and
+    removed from connected_clients after each broadcast round.
+
+    Broadcast JSON frame structure (assembled by serial_reader_thread):
+      rot        — raw quaternion: {qi, qj, qk, qr}
+      lin_accel  — linear acceleration: {x, y, z}  [m/s²]
+      gyro       — angular rate: {x, y, z}          [rad/s]
+      mag        — magnetometer: {x, y, z}           [µT]
+      cal        — calibration status (0–3)
+      euler      — computed Euler angles: {roll, pitch, yaw} [°]
+      hz         — measured frame rate [Hz]
+    """
     while True:
         frame = await queue.get()
         if not connected_clients:
@@ -179,14 +233,20 @@ async def broadcaster(queue: asyncio.Queue) -> None:
         connected_clients.difference_update(dead_clients)
 
 
-# ---------- WebSocket handler ----------
+# **************** WEBSOCKET CONNECTION HANDLER ****************
+
 async def ws_handler(websocket) -> None:
-    """Handle a new WebSocket connection."""
+    """
+    Accept a new browser WebSocket connection.
+
+    Registers the socket in connected_clients so broadcaster() can push frames.
+    The connection is kept open until the client closes it or drops.
+    No inbound messages are expected from the browser (read-only visualizer).
+    """
     addr = websocket.remote_address
     logger.info(f"WebSocket client connected: {addr}")
     connected_clients.add(websocket)
     try:
-        # Keep connection alive until client disconnects
         await websocket.wait_closed()
     except Exception as e:
         logger.warning(f"WebSocket handler error for {addr}: {e}")
@@ -195,32 +255,42 @@ async def ws_handler(websocket) -> None:
         logger.info(f"WebSocket client disconnected: {addr}")
 
 
-# ---------- HTTP static file server ----------
-def start_http_server(static_dir: Path, http_port: int) -> None:
-    """Start a simple HTTP server to serve web_static/ files."""
+# **************** HTTP SERVER (static web UI) ****************
 
+def start_http_server(static_dir: Path, http_port: int) -> None:
+    """
+    Serve the IMU 3D visualizer from web_static/ on http_port.
+    Runs in a dedicated daemon thread (not the asyncio loop).
+    """
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(static_dir), **kwargs)
 
         def log_message(self, format, *args):
-            # Route HTTP access logs through our logger
             logger.debug(f"HTTP {self.address_string()} - " + format % args)
 
-    # Allow port reuse
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("", http_port), Handler) as httpd:
         logger.info(f"HTTP server serving {static_dir} on port {http_port}")
         httpd.serve_forever()
 
 
-# ---------- Main ----------
+# **************** MAIN ENTRY POINT ****************
+
 async def main_async(args: argparse.Namespace) -> None:
+    """
+    Bootstrap sequence:
+      1. Create asyncio Queue (serial thread → broadcaster coroutine pipe)
+      2. Start serial reader thread (daemon)
+      3. Start HTTP server thread (daemon)
+      4. Launch broadcaster coroutine
+      5. Start WebSocket server and await forever
+    """
     global data_queue, _loop
     _loop = asyncio.get_running_loop()
-    data_queue = asyncio.Queue(maxsize=200)
+    data_queue = asyncio.Queue(maxsize=200)   # cap prevents unbounded backlog
 
-    # Start serial reader in background thread
+    # ── 1+2. Serial reader thread ──────────────────────────
     t = threading.Thread(
         target=serial_reader_thread,
         args=(args.port, args.baud, _loop, data_queue),
@@ -229,7 +299,7 @@ async def main_async(args: argparse.Namespace) -> None:
     )
     t.start()
 
-    # Start HTTP server in background thread
+    # ── 3. HTTP server thread ──────────────────────────────
     static_dir = Path(__file__).parent / "web_static"
     if not static_dir.exists():
         logger.warning(f"web_static directory not found at {static_dir}")
@@ -242,21 +312,20 @@ async def main_async(args: argparse.Namespace) -> None:
         )
         http_thread.start()
 
-    # Start broadcaster coroutine
+    # ── 4. Broadcaster coroutine ───────────────────────────
     asyncio.create_task(broadcaster(data_queue))
 
-    # Start WebSocket server on a different port (ws_port + 1)
+    # ── 5. WebSocket server ────────────────────────────────
     ws_actual_port = args.ws_port + 1
     logger.info(f"Starting WebSocket server on ws://localhost:{ws_actual_port}")
     logger.info(f"Open browser at http://localhost:{args.ws_port}")
 
-    # Open browser automatically
     url = f"http://localhost:{args.ws_port}"
     threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 
     async with websockets.serve(ws_handler, "0.0.0.0", ws_actual_port):
         logger.info("Bridge running. Press Ctrl+C to stop.")
-        await asyncio.Future()  # run forever
+        await asyncio.Future()   # run forever
 
 
 def parse_args() -> argparse.Namespace:
@@ -265,7 +334,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--port", default="/dev/ttyACM0",
-        help="Serial port device (linux: /dev/ttyACM0, find:ls /dev/cu.*)"
+        help="Serial port device (linux: /dev/ttyACM0, find: ls /dev/cu.*)"
     )
     parser.add_argument(
         "--baud", type=int, default=921600,
@@ -277,6 +346,8 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
+
+# **************** SCRIPT ENTRY ****************
 
 if __name__ == "__main__":
     args = parse_args()
