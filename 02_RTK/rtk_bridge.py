@@ -1,32 +1,49 @@
 """
-rtk_bridge.py - RTK serial reader to WebSocket bridge + static web map UI.
+rtk_bridge.py — RTK serial reader to WebSocket bridge + static web map UI.
+
+Data flow:
+    Serial Port → SerialReader → NMEAPipeline (accumulates GGA + RMC state)
+                                        ↓  snapshot() at N Hz
+                                 BroadcastLoop → WebSocketServer → Browser
+
+NMEAPipeline stages:
+    raw NMEA line
+      → _verify_checksum()   → validated line | None
+      → _dispatch()          → routes by sentence type
+      → _parse_gga()         → updates internal RTKFrame (lat/lon/alt/fix/sats/hdop)
+      → _parse_rmc()         → updates internal RTKFrame (speed/track)
 
 Runs:
-  - RTKReader serial thread (NMEA parser in rtk_reader.py)
-  - HTTP server for web_static/
-  - WebSocket broadcast of latest RTK snapshot
+  - SerialReader daemon thread  (NMEA parser, auto-reconnect on failure)
+  - HttpFileServer daemon thread (serves web_static/)
+  - BroadcastLoop asyncio coroutine (polls pipeline, pushes to WS clients)
+  - WebSocketServer asyncio server
 
-If RTK has no valid lat/lon, it falls back to DEFAULT_LAT/LON.
+Port convention (same as 01_IMU):
+  HTTP  = --ws-port        (default 8775)
+  WebSocket = --ws-port+1  (default 8776)
 """
 
-# **************** IMPORTS ****************
+# ── IMPORTS ────────────────────────────────────────────────────────────────────
 
 import argparse
 import asyncio
+import copy
 import json
 import logging
+import serial
 import socketserver
 import threading
 import time
 import webbrowser
+from dataclasses import dataclass, field
 from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
+from typing import Optional
 
 import websockets
 
-from rtk_reader import RTKReader
-
-# **************** LOGGING SETUP ****************
+# ── LOGGING ────────────────────────────────────────────────────────────────────
 
 _py_name = Path(__file__).stem
 OUTPUT_PATH = Path(__file__).parent
@@ -42,193 +59,595 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# **************** DEFAULT POSITION (fallback when no GPS fix) ****************
+# ── DEFAULT POSITION (fallback when no GPS fix) ────────────────────────────────
 #
-# Used by normalize_frame() when RTKReader has not yet produced a valid lat/lon.
+# Used by RTKFrame.to_dict() when lat/lon are still None.
 # Set to the known field-test site so the map opens in the right place.
 
-DEFAULT_LAT = 38.9412928598587
-DEFAULT_LON = -92.31884600793728
+DEFAULT_LAT: float = 38.9412928598587
+DEFAULT_LON: float = -92.31884600793728
 
-# **************** GLOBAL STATE ****************
+# ══════════════════════════════════════════════════════════════════════════════
+# BLOCK 1 · DATA MODEL
+# ══════════════════════════════════════════════════════════════════════════════
 
-connected_clients: set = set()   # all live WebSocket connections from browsers
 
-
-# **************** FRAME NORMALIZER ****************
-
-def normalize_frame(raw: dict) -> dict:
+@dataclass
+class RTKFrame:
     """
-    Convert the raw RTKReader snapshot into a broadcast-ready dict.
+    Typed data carrier for one RTK position snapshot.
 
-    If lat/lon are None (no fix or serial unavailable), substitutes DEFAULT
-    position values and marks source="default" so the frontend can indicate
-    that the displayed position is a placeholder.
-
-    Input (from RTKReader.get_data()):
-      lat, lon, alt, fix_quality, num_sats, hdop,
-      speed_knots, track_deg, ts, raw_gga
-
-    Output (sent to all WebSocket clients):
-      lat, lon, alt           — position (DEFAULT_LAT/LON if no fix)
-      fix_quality             — 0=no fix, 1=GPS, 2=DGPS, 4=RTK fixed, 5=RTK float
-      num_sats, hdop          — quality indicators
-      speed_knots, track_deg  — motion (may be None)
-      rtk_ts                  — timestamp from RTKReader (0.0 if never updated)
-      server_ts               — time.time() at moment of normalization
-      source                  — "rtk" | "default"
+    Fields are accumulated incrementally across multiple NMEA sentences:
+      - GGA fills: lat, lon, alt, fix_quality, num_sats, hdop, rtk_ts
+      - RMC fills: speed_knots, track_deg
     """
-    lat = raw.get("lat")
-    lon = raw.get("lon")
-    use_default = lat is None or lon is None
-    if use_default:
-        lat = DEFAULT_LAT
-        lon = DEFAULT_LON
 
-    return {
-        "lat":         lat,
-        "lon":         lon,
-        "alt":         raw.get("alt"),
-        "fix_quality": raw.get("fix_quality", 0),
-        "num_sats":    raw.get("num_sats", 0),
-        "hdop":        raw.get("hdop"),
-        "speed_knots": raw.get("speed_knots"),
-        "track_deg":   raw.get("track_deg"),
-        "rtk_ts":      raw.get("ts", 0.0),
-        "server_ts":   time.time(),
-        "source":      "default" if use_default else "rtk",
-    }
+    lat:         Optional[float] = None   # decimal degrees, +N/-S
+    lon:         Optional[float] = None   # decimal degrees, +E/-W
+    alt:         Optional[float] = None   # metres above MSL
+    fix_quality: int             = 0      # 0=no fix, 1=GPS, 2=DGPS, 4=RTK fixed, 5=RTK float
+    num_sats:    int             = 0      # satellites in use
+    hdop:        Optional[float] = None   # horizontal dilution of precision
+    speed_knots: Optional[float] = None   # ground speed from RMC
+    track_deg:   Optional[float] = None   # true course over ground from RMC
+    rtk_ts:      Optional[float] = None   # Unix timestamp of last GGA update
+
+    def to_dict(
+        self,
+        *,
+        server_ts: float,
+        default_lat: float,
+        default_lon: float,
+    ) -> dict:
+        """
+        Serialize to broadcast-ready dict.
+
+        When lat/lon are None (no fix yet), substitutes default_lat/default_lon
+        and sets source='default' so the frontend can show a placeholder marker.
+
+        Output keys:
+          lat, lon, alt           — position
+          fix_quality             — GPS fix type
+          num_sats, hdop          — quality indicators
+          speed_knots, track_deg  — motion (may be None)
+          rtk_ts                  — timestamp of last GGA (None until first fix)
+          server_ts               — time.time() at serialization
+          source                  — "rtk" | "default"
+        """
+        use_default = self.lat is None or self.lon is None
+        return {
+            "lat":         default_lat if use_default else self.lat,
+            "lon":         default_lon if use_default else self.lon,
+            "alt":         self.alt,
+            "fix_quality": self.fix_quality,
+            "num_sats":    self.num_sats,
+            "hdop":        self.hdop,
+            "speed_knots": self.speed_knots,
+            "track_deg":   self.track_deg,
+            "rtk_ts":      self.rtk_ts if self.rtk_ts is not None else 0.0,
+            "server_ts":   server_ts,
+            "source":      "default" if use_default else "rtk",
+        }
 
 
-# **************** WEBSOCKET CONNECTION HANDLER ****************
+# ══════════════════════════════════════════════════════════════════════════════
+# BLOCK 2 · PIPELINE
+# ══════════════════════════════════════════════════════════════════════════════
 
-async def ws_handler(websocket) -> None:
+
+class NMEAPipeline:
     """
-    Accept a new browser WebSocket connection.
+    Stateful accumulator pipeline for NMEA sentences.
 
-    Registers the socket in connected_clients so broadcast_loop() can push frames.
-    The connection is kept open until the client disconnects.
-    No inbound messages are expected (read-only map visualizer).
+    Each call to process() feeds one raw line through the pipeline and updates
+    the internal RTKFrame.  Callers retrieve the current state via snapshot().
+
+    Pipeline stages:
+        raw NMEA line
+          → _verify_checksum()   → validated line | None (invalid lines dropped)
+          → _dispatch()          → routes by sentence type (GGA / RMC / ignore)
+          → _parse_gga()         → updates self._frame (lat/lon/alt/fix/sats/hdop/rtk_ts)
+          → _parse_rmc()         → updates self._frame (speed_knots/track_deg)
+
+    Thread safety:
+        process() is called from the SerialReader thread.
+        snapshot() is called from the BroadcastLoop coroutine (event loop thread).
+        A threading.Lock protects all accesses to self._frame.
     """
-    addr = websocket.remote_address
-    logger.info(f"WebSocket client connected: {addr}")
-    connected_clients.add(websocket)
-    try:
-        await websocket.wait_closed()
-    finally:
-        connected_clients.discard(websocket)
-        logger.info(f"WebSocket client disconnected: {addr}")
+
+    def __init__(self) -> None:
+        self._frame = RTKFrame()
+        self._lock  = threading.Lock()
+
+    # ── Public API ─────────────────────────────────────────────────────────────
+
+    def process(self, raw_line: str) -> None:
+        """
+        CORE — Feed one raw NMEA line through the pipeline; update internal state.
+
+        Receives validated text from SerialReader (INPUT) and updates self._frame,
+        which BroadcastLoop will snapshot and serialize toward WebSocketServer (OUTPUT).
+        """
+        validated = self._verify_checksum(raw_line)
+        if validated is not None:
+            self._dispatch(validated)
+
+    def snapshot(self) -> RTKFrame:
+        """Return a thread-safe deep copy of the current accumulated frame."""
+        with self._lock:
+            return copy.copy(self._frame)
+
+    # ── Stage 1: checksum verification ─────────────────────────────────────────
+
+    def _verify_checksum(self, line: str) -> Optional[str]:
+        """
+        Validate NMEA XOR checksum.
+
+        Returns the original line if valid, None otherwise.
+        Checksum = XOR of all bytes between '$' and '*' (exclusive).
+        """
+        if not line.startswith("$"):
+            return None
+        try:
+            star_idx = line.rindex("*")
+        except ValueError:
+            return None   # no checksum field
+
+        payload      = line[1:star_idx]
+        expected_hex = line[star_idx + 1 : star_idx + 3]
+        if len(expected_hex) != 2:
+            return None
+
+        try:
+            expected = int(expected_hex, 16)
+        except ValueError:
+            return None
+
+        computed = 0
+        for ch in payload:
+            computed ^= ord(ch)
+
+        if computed != expected:
+            logger.warning("NMEAPipeline: checksum mismatch, skipping: %r", line)
+            return None
+        return line
+
+    # ── Stage 2: dispatch ──────────────────────────────────────────────────────
+
+    def _dispatch(self, line: str) -> None:
+        """
+        Route a validated NMEA sentence to the appropriate parser.
+
+        Strips the talker prefix (GP/GN/GL/GA…) before comparing sentence type,
+        so both $GPGGA and $GNGGA match as "GGA".
+        """
+        body   = line[1:].split("*")[0]
+        fields = body.split(",")
+        if not fields or len(fields[0]) < 3:
+            return
+
+        sentence_type = fields[0][2:]   # strip 2-char talker prefix
+
+        if sentence_type == "GGA":
+            self._parse_gga(fields)
+        elif sentence_type == "RMC":
+            self._parse_rmc(fields)
+
+    # ── Stage 3a: GGA parser ───────────────────────────────────────────────────
+
+    def _parse_gga(self, fields: list) -> None:
+        """
+        Parse a GGA sentence and update position + quality fields.
+
+        GGA field indices:
+          [1] UTC time
+          [2] Latitude  DDMM.MMMMM
+          [3] N/S indicator
+          [4] Longitude DDDMM.MMMMM
+          [5] E/W indicator
+          [6] Fix quality  (0=invalid, 1=GPS, 2=DGPS, 4=RTK fixed, 5=RTK float)
+          [7] Number of satellites in use
+          [8] HDOP
+          [9] Altitude MSL (metres)
+        """
+        try:
+            if len(fields) < 11:
+                logger.warning("NMEAPipeline: GGA sentence too short: %s", fields)
+                return
+
+            fix_quality = int(fields[6])   if fields[6] else 0
+            num_sats    = int(fields[7])   if fields[7] else 0
+            hdop        = float(fields[8]) if fields[8] else None
+            alt         = float(fields[9]) if fields[9] else None
+            lat = self._nmea_to_decimal(fields[2], fields[3]) \
+                  if (fields[2] and fields[3]) else None
+            lon = self._nmea_to_decimal(fields[4], fields[5]) \
+                  if (fields[4] and fields[5]) else None
+
+            with self._lock:
+                self._frame.lat         = lat
+                self._frame.lon         = lon
+                self._frame.alt         = alt
+                self._frame.fix_quality = fix_quality
+                self._frame.num_sats    = num_sats
+                self._frame.hdop        = hdop
+                self._frame.rtk_ts      = time.time()
+
+        except (ValueError, IndexError) as e:
+            logger.warning("NMEAPipeline: failed to parse GGA: %s — fields=%s", e, fields)
+
+    # ── Stage 3b: RMC parser ───────────────────────────────────────────────────
+
+    def _parse_rmc(self, fields: list) -> None:
+        """
+        Parse a RMC sentence and update speed / track fields.
+
+        RMC field indices:
+          [2] Status: 'A'=active (valid), 'V'=void (skip)
+          [7] Speed over ground [knots]
+          [8] True course over ground [degrees]
+
+        Only processed when status == 'A'.
+        """
+        try:
+            if len(fields) < 9:
+                return
+            if fields[2] != "A":
+                return   # void fix — data not reliable
+
+            speed_knots = float(fields[7]) if fields[7] else None
+            track_deg   = float(fields[8]) if fields[8] else None
+
+            with self._lock:
+                self._frame.speed_knots = speed_knots
+                self._frame.track_deg   = track_deg
+
+        except (ValueError, IndexError) as e:
+            logger.warning("NMEAPipeline: failed to parse RMC: %s — fields=%s", e, fields)
+
+    # ── Helper ─────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _nmea_to_decimal(raw: str, direction: str) -> Optional[float]:
+        """
+        Convert NMEA coordinate string to decimal degrees.
+
+        NMEA format: DDMM.MMMMM (lat) or DDDMM.MMMMM (lon).
+        Algorithm: degrees = integer prefix before last 2 pre-dot digits;
+                   minutes = last 2 pre-dot digits + decimal fraction.
+        direction 'S' or 'W' negates the result.
+        """
+        try:
+            dot_idx = raw.index(".")
+            deg_str = raw[: dot_idx - 2]
+            min_str = raw[dot_idx - 2 :]
+            degrees = float(deg_str) + float(min_str) / 60.0
+            if direction in ("S", "W"):
+                degrees = -degrees
+            return degrees
+        except (ValueError, IndexError) as e:
+            logger.warning("NMEAPipeline: _nmea_to_decimal failed for %r %r: %s", raw, direction, e)
+            return None
 
 
-# ****************
-# **************** DATA OUTPUT: RTKReader → all web clients (this process → browser)
-# ****************
+# ══════════════════════════════════════════════════════════════════════════════
+# BLOCK 3 · I/O ADAPTERS
+# ══════════════════════════════════════════════════════════════════════════════
 
-async def broadcast_loop(reader: RTKReader, hz: float) -> None:
+
+class SerialReader:
     """
-    Asyncio coroutine: polls RTKReader at `hz` Hz and pushes the normalized
-    snapshot to every connected browser.
+    Daemon thread: read NMEA lines from the GPS receiver and feed into NMEAPipeline.
 
-    RTKReader is a daemon thread that continuously updates its internal snapshot;
-    this coroutine simply samples that snapshot at the configured broadcast rate.
-    There is no queue here — the latest snapshot overwrites any previous one.
-
-    Dead connections (any send exception) are silently removed.
-
-    Broadcast JSON structure (see normalize_frame() for full field list):
-      lat / lon / alt         — position
-      fix_quality             — GPS fix type
-      num_sats / hdop         — quality
-      speed_knots / track_deg — motion
-      rtk_ts / server_ts      — timestamps
-      source                  — "rtk" | "default"
+    Auto-reconnects every 3 s on serial failure so the bridge survives
+    cable disconnects or device resets.
     """
-    period = 1.0 / max(hz, 0.5)
-    while True:
-        frame = normalize_frame(reader.get_data())   # ← READ from RTKReader
-        if connected_clients:
-            msg  = json.dumps(frame)
-            dead = set()
-            for ws in connected_clients.copy():
+
+    RECONNECT_DELAY = 3.0   # seconds between reconnect attempts
+
+    def __init__(
+        self,
+        port: str,
+        baud: int,
+        pipeline: NMEAPipeline,
+        timeout: float = 1.0,
+    ) -> None:
+        self._port     = port
+        self._baud     = baud
+        self._pipeline = pipeline
+        self._timeout  = timeout
+        self._thread   = threading.Thread(
+            target=self._run,
+            name="rtk-serial-reader",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        """Start the daemon reader thread."""
+        self._thread.start()
+
+    def _run(self) -> None:
+        """Thread body: open port → read loop → reconnect on error."""
+        while True:
+            try:
+                ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
+            except serial.SerialException as e:
+                logger.error("SerialReader: failed to open %s: %s — retrying in %.0fs",
+                             self._port, e, self.RECONNECT_DELAY)
+                time.sleep(self.RECONNECT_DELAY)
+                continue
+
+            logger.info("SerialReader: port opened: %s @ %d baud", self._port, self._baud)
+            try:
+                while True:
+                    try:
+                        # ── INPUT ──────────────────────────────────────────────────────────
+                        # Raw NMEA bytes arrive here from the GPS receiver.
+                        # If data looks wrong, start debugging from this line.
+                        raw = ser.readline()
+                        # ───────────────────────────────────────────────────────────────────
+                        if not raw:
+                            continue
+                        line = raw.decode("ascii", errors="ignore").strip()
+                        if line:
+                            self._pipeline.process(line)
+                    except serial.SerialException as e:
+                        logger.error("SerialReader: read error: %s — reconnecting", e)
+                        break
+                    except Exception as e:
+                        logger.error("SerialReader: unexpected error: %s", e)
+            finally:
                 try:
-                    await ws.send(msg)               # ← PUSH to browser
+                    ser.close()
+                except Exception as e:
+                    logger.warning("SerialReader: error closing port: %s", e)
+                logger.info("SerialReader: port closed, reconnecting in %.0fs",
+                            self.RECONNECT_DELAY)
+                time.sleep(self.RECONNECT_DELAY)
+
+
+class BroadcastLoop:
+    """
+    Asyncio coroutine: poll NMEAPipeline.snapshot() at N Hz and push serialized
+    frames into an asyncio.Queue for WebSocketServer to consume.
+
+    Decouples the snapshot/serialize step from the per-client send step.
+    """
+
+    def __init__(
+        self,
+        pipeline: NMEAPipeline,
+        queue: asyncio.Queue,
+        hz: float,
+        default_lat: float,
+        default_lon: float,
+    ) -> None:
+        self._pipeline    = pipeline
+        self._queue       = queue
+        self._period      = 1.0 / max(hz, 0.5)
+        self._default_lat = default_lat
+        self._default_lon = default_lon
+
+    async def run(self) -> None:
+        """Coroutine entry: sample pipeline and enqueue JSON messages."""
+        while True:
+            frame = self._pipeline.snapshot()
+            msg   = json.dumps(
+                frame.to_dict(
+                    server_ts=time.time(),
+                    default_lat=self._default_lat,
+                    default_lon=self._default_lon,
+                )
+            )
+            # Non-blocking put; drop frame if queue is full to avoid backlog
+            try:
+                self._queue.put_nowait(msg)   # → WebSocketServer
+            except asyncio.QueueFull:
+                logger.debug("BroadcastLoop: queue full, dropping frame")
+            await asyncio.sleep(self._period)
+
+
+class WebSocketServer:
+    """
+    Manage browser WebSocket connections and broadcast queued messages.
+
+    All connected clients receive every message dequeued from the shared queue.
+    Dead connections are silently pruned.
+    """
+
+    def __init__(self, port: int, queue: asyncio.Queue) -> None:
+        self._port    = port
+        self._queue   = queue
+        self._clients: set = set()
+        self._lock    = asyncio.Lock()
+
+    async def handle_client(self, websocket) -> None:
+        """Accept and track a new browser connection until it closes."""
+        addr = websocket.remote_address
+        logger.info("WebSocket client connected: %s", addr)
+        async with self._lock:
+            self._clients.add(websocket)
+        try:
+            await websocket.wait_closed()
+        finally:
+            async with self._lock:
+                self._clients.discard(websocket)
+            logger.info("WebSocket client disconnected: %s", addr)
+
+    async def broadcast(self) -> None:
+        """Dequeue messages and forward to all connected clients."""
+        while True:
+            msg  = await self._queue.get()
+            async with self._lock:
+                clients = set(self._clients)
+
+            if not clients:
+                continue
+
+            dead = set()
+            for ws in clients:
+                try:
+                    # ── OUTPUT ─────────────────────────────────────────────────────────
+                    # Processed JSON frame exits the program here to the browser.
+                    # If the browser receives wrong data, start debugging here.
+                    await ws.send(msg)
+                    # ───────────────────────────────────────────────────────────────────
                 except Exception:
                     dead.add(ws)
-            connected_clients.difference_update(dead)
-        await asyncio.sleep(period)
+
+            if dead:
+                async with self._lock:
+                    self._clients.difference_update(dead)
+
+    async def serve(self) -> None:
+        """Start the WebSocket server and run broadcast + accept loops forever."""
+        async with websockets.serve(self.handle_client, "0.0.0.0", self._port):
+            logger.info("WebSocket server listening on ws://localhost:%d", self._port)
+            await self.broadcast()
 
 
-# **************** HTTP SERVER (static web UI) ****************
-
-def start_http_server(static_dir: Path, http_port: int) -> None:
+class HttpFileServer:
     """
-    Serve the RTK map visualizer from web_static/ on http_port.
-    Runs in a dedicated daemon thread (not the asyncio loop).
+    Serve web_static/ over HTTP in a daemon thread.
+
+    Uses Python's built-in SimpleHTTPRequestHandler; HTTP access logs are
+    forwarded to logger.debug to avoid cluttering INFO output.
     """
-    class Handler(SimpleHTTPRequestHandler):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=str(static_dir), **kwargs)
 
-        def log_message(self, fmt, *args):
-            logger.debug("HTTP %s - %s", self.address_string(), fmt % args)
-
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("", http_port), Handler) as httpd:
-        logger.info("HTTP server serving %s on port %d", static_dir, http_port)
-        httpd.serve_forever()
-
-
-# **************** MAIN ENTRY POINT ****************
-
-async def main_async(args: argparse.Namespace) -> None:
-    """
-    Bootstrap sequence:
-      1. Start RTKReader serial thread (begins reading NMEA immediately)
-      2. Start HTTP server thread
-      3. Launch broadcast_loop coroutine (polls RTKReader, pushes to browsers)
-      4. Start WebSocket server and await forever
-    """
-    # ── 1. RTKReader serial thread ─────────────────────────
-    reader = RTKReader()
-    reader.start()
-
-    # ── 2. HTTP server thread ──────────────────────────────
-    static_dir = Path(__file__).parent / "web_static"
-    if not static_dir.exists():
-        logger.warning("web_static directory not found at %s", static_dir)
-    else:
-        http_thread = threading.Thread(
-            target=start_http_server,
-            args=(static_dir, args.ws_port),
-            daemon=True,
+    def __init__(self, static_dir: Path, port: int) -> None:
+        self._static_dir = static_dir
+        self._port       = port
+        self._thread     = threading.Thread(
+            target=self._run,
             name="rtk-http-server",
+            daemon=True,
         )
-        http_thread.start()
 
-    ws_actual_port = args.ws_port + 1
-    logger.info("Starting WebSocket server on ws://localhost:%d", ws_actual_port)
-    logger.info("Open browser at http://localhost:%d", args.ws_port)
+    def start(self) -> None:
+        """Start the daemon HTTP server thread."""
+        self._thread.start()
 
-    if args.open_browser:
-        url = f"http://localhost:{args.ws_port}"
-        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    def _run(self) -> None:
+        """Thread body: create TCPServer and serve_forever."""
+        static_dir = self._static_dir   # captured for closure below
 
-    # ── 3. Broadcast coroutine ─────────────────────────────
-    asyncio.create_task(broadcast_loop(reader, args.hz))
+        class _Handler(SimpleHTTPRequestHandler):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, directory=str(static_dir), **kwargs)
 
-    # ── 4. WebSocket server ────────────────────────────────
-    async with websockets.serve(ws_handler, "0.0.0.0", ws_actual_port):
-        logger.info("RTK bridge running. Press Ctrl+C to stop.")
-        await asyncio.Future()   # run forever
+            def log_message(self, fmt, *args):
+                logger.debug("HTTP %s - %s", self.address_string(), fmt % args)
+
+        socketserver.TCPServer.allow_reuse_address = True
+        try:
+            with socketserver.TCPServer(("", self._port), _Handler) as httpd:
+                logger.info("HTTP server serving %s on port %d", self._static_dir, self._port)
+                httpd.serve_forever()
+        except Exception as e:
+            logger.error("HttpFileServer: failed to start on port %d: %s", self._port, e)
 
 
-def parse_args() -> argparse.Namespace:
+# ══════════════════════════════════════════════════════════════════════════════
+# BLOCK 4 · APPLICATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class RTKBridge:
+    """
+    Top-level orchestrator.  Assembles and starts all components:
+      1. NMEAPipeline      — stateful NMEA accumulator
+      2. SerialReader      — daemon thread feeding the pipeline
+      3. HttpFileServer    — daemon thread serving web_static/
+      4. BroadcastLoop     — asyncio coroutine polling pipeline → queue
+      5. WebSocketServer   — asyncio server delivering queue to browsers
+    """
+
+    def __init__(
+        self,
+        serial_port: str,
+        baud: int,
+        ws_port: int,
+        hz: float,
+        static_dir: Path,
+        default_lat: float,
+        default_lon: float,
+        open_browser: bool,
+    ) -> None:
+        self._serial_port  = serial_port
+        self._baud         = baud
+        self._http_port    = ws_port
+        self._ws_port      = ws_port + 1
+        self._hz           = hz
+        self._static_dir   = static_dir
+        self._default_lat  = default_lat
+        self._default_lon  = default_lon
+        self._open_browser = open_browser
+
+    def run(self) -> None:
+        """Synchronous entry point: start daemon threads then hand off to asyncio."""
+        # ── 1. NMEA pipeline (shared state, no thread of its own) ──────────────
+        pipeline = NMEAPipeline()
+
+        # ── 2. Serial reader daemon thread ─────────────────────────────────────
+        serial_reader = SerialReader(self._serial_port, self._baud, pipeline)
+        serial_reader.start()
+
+        # ── 3. HTTP file server daemon thread ──────────────────────────────────
+        if not self._static_dir.exists():
+            logger.warning("web_static directory not found at %s", self._static_dir)
+        else:
+            HttpFileServer(self._static_dir, self._http_port).start()
+
+        logger.info(
+            "RTK bridge | HTTP=:%d  WebSocket=:%d  broadcast=%.1f Hz",
+            self._http_port, self._ws_port, self._hz,
+        )
+        logger.info("Open browser at http://localhost:%d", self._http_port)
+
+        if self._open_browser:
+            url = f"http://localhost:{self._http_port}"
+            threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+
+        # ── 4 + 5. Asyncio: broadcast loop + WS server ─────────────────────────
+        try:
+            asyncio.run(self._run_async(pipeline))
+        except KeyboardInterrupt:
+            logger.info("RTKBridge: stopped by user.")
+
+    async def _run_async(self, pipeline: NMEAPipeline) -> None:
+        """Asyncio coroutines: BroadcastLoop feeds the queue; WebSocketServer drains it."""
+        queue      = asyncio.Queue(maxsize=10)
+        ws_server  = WebSocketServer(self._ws_port, queue)
+        broadcast  = BroadcastLoop(
+            pipeline, queue, self._hz, self._default_lat, self._default_lon
+        )
+
+        await asyncio.gather(
+            broadcast.run(),
+            ws_server.serve(),
+        )
+
+
+# ── Entry Point ────────────────────────────────────────────────────────────────
+
+def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="RTK serial-to-WebSocket bridge")
+    parser.add_argument(
+        "--port",
+        default="/dev/ttyACM0",
+        help="Serial port for RTK receiver (default: /dev/ttyACM0)",
+    )
+    parser.add_argument(
+        "--baud",
+        type=int,
+        default=9600,
+        help="Serial baud rate (default: 9600)",
+    )
     parser.add_argument(
         "--ws-port",
         type=int,
         default=8775,
-        help="HTTP port for web UI (WebSocket uses ws-port+1)",
+        help="HTTP port for web UI; WebSocket uses ws-port+1 (default: 8775)",
     )
     parser.add_argument(
         "--hz",
@@ -238,23 +657,22 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--open-browser",
+        action=argparse.BooleanOptionalAction,
         default=True,
-        help="Auto-open browser after startup",
+        help="Auto-open browser after startup (default: true)",
     )
     return parser.parse_args()
 
 
-# **************** SCRIPT ENTRY ****************
-
 if __name__ == "__main__":
-    args = parse_args()
-    logger.info(
-        "Starting RTK bridge | http=:%d | ws=:%d | broadcast_hz=%.2f",
-        args.ws_port,
-        args.ws_port + 1,
-        args.hz,
-    )
-    try:
-        asyncio.run(main_async(args))
-    except KeyboardInterrupt:
-        logger.info("Bridge stopped by user.")
+    args = _parse_args()
+    RTKBridge(
+        serial_port=args.port,
+        baud=args.baud,
+        ws_port=args.ws_port,
+        hz=args.hz,
+        static_dir=Path(__file__).parent / "web_static",
+        default_lat=DEFAULT_LAT,
+        default_lon=DEFAULT_LON,
+        open_browser=args.open_browser,
+    ).run()
