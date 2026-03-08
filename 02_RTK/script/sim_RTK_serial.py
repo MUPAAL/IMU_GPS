@@ -18,6 +18,10 @@ while True:
     rmc = nmea(f"GNRMC,123519,A,{lat_s},{ns},{lon_s},{ew},1.20,87.3,050326,,,A")
 
     # rtk_bridge.py will read from /tmp/rtk_in, so we write to /tmp/rtk_out for testing
+    # *****************************************************************************
+    # To create the virtual serial ports, run the following command in the terminal before executing this script:
+    # socat -d -d pty,raw,echo=0,link=/tmp/rtk_in pty,raw,echo=0,link=/tmp/rtk_out
+    # *****************************************************************************
     with open('/tmp/rtk_out', 'wb', buffering=0) as f:
         f.write(gga); f.write(rmc)
 
