@@ -29,6 +29,7 @@ const I18N = {
     startSim: 'Start Sim',
     stopSim: 'Stop Sim',
     exportRoute: 'Export CSV',
+    topNorth: 'Top North',
     cardCurrent: 'Current Position',
     latitude: 'Latitude',
     longitude: 'Longitude',
@@ -79,6 +80,7 @@ const I18N = {
     startSim: '开始模拟',
     stopSim: '停止模拟',
     exportRoute: '导出CSV',
+    topNorth: '顶视北向',
     cardCurrent: '当前位置',
     latitude: '纬度',
     longitude: '经度',
@@ -139,6 +141,7 @@ const editTolerance = document.getElementById('editTolerance');
 const editMaxSpeed = document.getElementById('editMaxSpeed');
 const btnStartSim = document.getElementById('btnStartSim');
 const btnExportRoute = document.getElementById('btnExportRoute');
+const btnTopNorth = document.getElementById('btn-top-north');
 const cardCurrentTitle = document.getElementById('cardCurrentTitle');
 const labelLat = document.getElementById('labelLat');
 const labelLon = document.getElementById('labelLon');
@@ -167,6 +170,8 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
 camera.position.set(1.5, 1.5, 2.5);
 camera.lookAt(0, 0, 0);
+const DEFAULT_CAMERA_POS = new THREE.Vector3(1.5, 1.5, 2.5);
+const TOP_VIEW_HEIGHT = 3.0;
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
@@ -267,6 +272,8 @@ let northOffsetDeg = 0;
 let rawHeadingDeg = 0;
 let isPaused = false;
 let lockYawOnly = false;
+let topNorthView = false;
+let lockYawBeforeTop = false;
 
 // North offset helpers
 function sendNorthOffset(frontendOffsetDeg) {
@@ -325,6 +332,40 @@ function updateHeadingDisplay(deg) {
   setText('heading_dir', COMPASS_DIRS[idx]);
 }
 
+function getNorthVector() {
+  const rad = THREE.MathUtils.degToRad(northOffsetDeg);
+  return new THREE.Vector3(Math.cos(rad), 0, Math.sin(rad)).normalize();
+}
+
+function setYawLock(enabled) {
+  lockYawOnly = enabled;
+  btnLockYaw.classList.toggle('active', lockYawOnly);
+}
+
+function setTopNorthView(enabled) {
+  topNorthView = enabled;
+  btnTopNorth.classList.toggle('active', topNorthView);
+  if (topNorthView) {
+    lockYawBeforeTop = lockYawOnly;
+    setYawLock(true);
+    controls.enableRotate = false;
+    controls.enablePan = false;
+    controls.target.set(0, 0, 0);
+    camera.position.set(0, TOP_VIEW_HEIGHT, 0.001);
+    const north = getNorthVector();
+    camera.up.set(north.x, north.y, north.z);
+    camera.lookAt(0, 0, 0);
+  } else {
+    controls.enableRotate = true;
+    controls.enablePan = true;
+    setYawLock(lockYawBeforeTop);
+    camera.up.set(0, 1, 0);
+    camera.position.copy(DEFAULT_CAMERA_POS);
+    camera.lookAt(0, 0, 0);
+  }
+  controls.update();
+}
+
 // Animation loop
 const SLERP_SPEED = 0.2;
 
@@ -349,6 +390,12 @@ function animate() {
   const displayHeadingDeg = (rawHeadingDeg - northOffsetDeg + 360) % 360;
   updateHeadingDisplay(displayHeadingDeg);
   drawCompass(displayHeadingDeg);
+
+  if (topNorthView) {
+    const north = getNorthVector();
+    camera.up.set(north.x, north.y, north.z);
+    camera.lookAt(0, 0, 0);
+  }
 
   controls.update();
   renderer.render(scene, camera);
@@ -989,8 +1036,12 @@ document.getElementById('btn-clear-north').addEventListener('click', () => {
 
 const btnLockYaw = document.getElementById('btn-lock-yaw');
 btnLockYaw.addEventListener('click', () => {
-  lockYawOnly = !lockYawOnly;
-  btnLockYaw.classList.toggle('active', lockYawOnly);
+  if (topNorthView) return;
+  setYawLock(!lockYawOnly);
+});
+
+btnTopNorth.addEventListener('click', () => {
+  setTopNorthView(!topNorthView);
 });
 
 const btnPause = document.getElementById('btn-pause');
@@ -1033,6 +1084,7 @@ function applyLanguage() {
   btnUndoNode.textContent = t('undoNode');
   btnStartSim.textContent = simTimer ? t('stopSim') : t('startSim');
   btnExportRoute.textContent = t('exportRoute');
+  btnTopNorth.textContent = t('topNorth');
   cardCurrentTitle.textContent = t('cardCurrent');
   labelLat.textContent = t('latitude');
   labelLon.textContent = t('longitude');

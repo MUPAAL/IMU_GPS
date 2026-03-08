@@ -131,7 +131,7 @@ python nav_bridge.py --nav-port 8785 --imu-ws ws://localhost:8766 --rtk-ws ws://
 
 - **数据流**：`串口 → SerialReader → IMUPipeline → asyncio.Queue → WebSocketServer → 浏览器`
 - **Pipeline 阶段**：`_parse → _enrich_euler → _enrich_hz → _serialize`
-- **功能**：实时 3D 姿态显示（Three.js）、罗盘 HUD、北偏校准、锁定偏航模式、11 个传感器数据卡片
+- **功能**：实时 3D 姿态显示（Three.js）、罗盘 HUD、北偏校准、锁定偏航模式、顶视北向视图、11 个传感器数据卡片
 
 ### 02_RTK — RTK 桥接器
 
@@ -143,7 +143,7 @@ python nav_bridge.py --nav-port 8785 --imu-ws ws://localhost:8766 --rtk-ws ws://
 
 - **数据流**：`imu_bridge(WS) + rtk_bridge(WS) → NavLoop(10 Hz) → NavController → NavWebSocketServer → 浏览器`
 - **布局**：上方 3D 视图（40%）+ 下方地图（60%）| 右侧数据面板（320 px）
-- **功能**：在单页中整合所有 IMU + RTK 功能、统一 WebSocket 连接、航向计算、路径点到达判定、北偏校准转发
+- **功能**：在单页中整合所有 IMU + RTK 功能、统一 WebSocket 连接、航向计算、路径点到达判定、北偏校准转发、顶视北向视图
 
 ## 代码规范
 

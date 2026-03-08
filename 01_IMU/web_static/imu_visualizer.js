@@ -26,6 +26,8 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
 camera.position.set(1.5, 1.5, 2.5);
 camera.lookAt(0, 0, 0);
+const DEFAULT_CAMERA_POS = new THREE.Vector3(1.5, 1.5, 2.5);
+const TOP_VIEW_HEIGHT = 3.0;
 
 // Orbit controls
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -157,6 +159,8 @@ let northOffsetDeg = 0;    // heading offset applied for true-north calibration 
 let rawHeadingDeg  = 0;    // latest raw (uncalibrated) heading from IMU
 let isPaused       = false; // whether to freeze live data updates
 let lockYawOnly    = false; // whether to show yaw only (strip pitch/roll)
+let topNorthView   = false; // top-down camera + north-up orientation
+let lockYawBeforeTop = false;
 
 // ========== North offset sync helpers ==========
 // Server convention: corrected = raw + server_offset  (add)
@@ -223,6 +227,40 @@ function updateHeadingDisplay(deg) {
   setText('heading_dir', COMPASS_DIRS[idx]);
 }
 
+function getNorthVector() {
+  const rad = THREE.MathUtils.degToRad(northOffsetDeg);
+  return new THREE.Vector3(Math.cos(rad), 0, Math.sin(rad)).normalize();
+}
+
+function setYawLock(enabled) {
+  lockYawOnly = enabled;
+  btnLockYaw.classList.toggle('active', lockYawOnly);
+}
+
+function setTopNorthView(enabled) {
+  topNorthView = enabled;
+  btnTopNorth.classList.toggle('active', topNorthView);
+  if (topNorthView) {
+    lockYawBeforeTop = lockYawOnly;
+    setYawLock(true);
+    controls.enableRotate = false;
+    controls.enablePan = false;
+    controls.target.set(0, 0, 0);
+    camera.position.set(0, TOP_VIEW_HEIGHT, 0.001);
+    const north = getNorthVector();
+    camera.up.set(north.x, north.y, north.z);
+    camera.lookAt(0, 0, 0);
+  } else {
+    controls.enableRotate = true;
+    controls.enablePan = true;
+    setYawLock(lockYawBeforeTop);
+    camera.up.set(0, 1, 0);
+    camera.position.copy(DEFAULT_CAMERA_POS);
+    camera.lookAt(0, 0, 0);
+  }
+  controls.update();
+}
+
 // ========== Animation loop ==========
 const SLERP_SPEED = 0.2;  // smoothing factor per frame
 
@@ -254,6 +292,12 @@ function animate() {
   const displayHeadingDeg = (rawHeadingDeg - northOffsetDeg + 360) % 360;
   updateHeadingDisplay(displayHeadingDeg);
   drawCompass(displayHeadingDeg);
+
+  if (topNorthView) {
+    const north = getNorthVector();
+    camera.up.set(north.x, north.y, north.z);
+    camera.lookAt(0, 0, 0);
+  }
 
   controls.update();
   renderer.render(scene, camera);
@@ -409,6 +453,7 @@ connect();
 
 // Reset View
 document.getElementById('btn-reset-view').addEventListener('click', () => {
+  if (topNorthView) setTopNorthView(false);
   camera.position.set(1.5, 1.5, 2.5);
   camera.lookAt(0, 0, 0);
   controls.reset();
@@ -417,8 +462,13 @@ document.getElementById('btn-reset-view').addEventListener('click', () => {
 // Lock Yaw toggle
 const btnLockYaw = document.getElementById('btn-lock-yaw');
 btnLockYaw.addEventListener('click', () => {
-  lockYawOnly = !lockYawOnly;
-  btnLockYaw.classList.toggle('active', lockYawOnly);
+  if (topNorthView) return;
+  setYawLock(!lockYawOnly);
+});
+
+const btnTopNorth = document.getElementById('btn-top-north');
+btnTopNorth.addEventListener('click', () => {
+  setTopNorthView(!topNorthView);
 });
 
 // Pause / Resume toggle

@@ -131,7 +131,7 @@ python nav_bridge.py --nav-port 8785 --imu-ws ws://localhost:8766 --rtk-ws ws://
 
 - **Data flow**: `Serial → SerialReader → IMUPipeline → asyncio.Queue → WebSocketServer → Browser`
 - **Pipeline stages**: `_parse → _enrich_euler → _enrich_hz → _serialize`
-- **Features**: real-time 3D orientation (Three.js), compass HUD, north offset calibration, lock-yaw mode, 11 sensor data cards
+- **Features**: real-time 3D orientation (Three.js), compass HUD, north offset calibration, lock-yaw mode, top-north view (top-down with north-up), 11 sensor data cards
 
 ### 02_RTK — RTK Bridge
 
@@ -143,7 +143,7 @@ python nav_bridge.py --nav-port 8785 --imu-ws ws://localhost:8766 --rtk-ws ws://
 
 - **Data flow**: `imu_bridge(WS) + rtk_bridge(WS) → NavLoop(10 Hz) → NavController → NavWebSocketServer → Browser`
 - **Layout**: upper 3D view (40%) + lower map (60%) | right data panel (320 px)
-- **Features**: all IMU + RTK features in a single page, unified WebSocket, heading computation, waypoint reach detection, north offset forwarding
+- **Features**: all IMU + RTK features in a single page, unified WebSocket, heading computation, waypoint reach detection, north offset forwarding, top-north view
 
 ## Code Conventions
 
