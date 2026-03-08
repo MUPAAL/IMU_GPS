@@ -15,6 +15,24 @@
  *
  * Dependencies:
  *   Adafruit BNO08x Library (install via Arduino Library Manager)
+ *
+ * Compact JSON protocol:
+ *   JSON keys are shortened to single letters and nested objects are flattened
+ *   to arrays, keeping each frame under 256 bytes to avoid USB CDC-ACM buffer
+ *   truncation. imu_bridge.py expands them back to full names on the Python side.
+ *
+ *   Key | Full name   | Format               | Precision
+ *   ----|-------------|----------------------|----------
+ *    t  | ts          | scalar (uint32)      | integer (millis)
+ *    r  | rot         | [i, j, k, r, acc]    | %.3f quat, %.2f acc
+ *    g  | game_rot    | [i, j, k, r]         | %.3f
+ *    a  | accel       | [x, y, z]            | %.2f  (m/s²)
+ *    l  | lin_accel   | [x, y, z]            | %.2f  (m/s²)
+ *    v  | gravity     | [x, y, z]            | %.2f  (m/s²)
+ *    w  | gyro        | [x, y, z]            | %.3f  (rad/s)
+ *    m  | mag         | [x, y, z]            | %.1f  (µT)
+ *    s  | steps       | scalar (uint32)      | integer
+ *    c  | cal         | scalar (uint8 0-3)   | integer
  */
 
 #include <SPI.h>
@@ -81,7 +99,7 @@ void enableReports() {
 
 // ---------- Setup ----------
 void setup() {
-  // Increase TX buffer to 1024 bytes to fit full JSON frames (~320 bytes each)
+  // Increase TX buffer to 1024 bytes to fit JSON frames comfortably
   Serial.setTxBufferSize(1024);
   Serial.begin(921600);
   delay(200);
@@ -185,24 +203,28 @@ void readSensorData() {
     }
 }
 
-// ---------- Output one JSON line at 50Hz ----------
+// ---------- Output one compact JSON line at 50Hz ----------
+// Compact key mapping (keeps frame < 256 bytes to avoid USB CDC-ACM truncation):
+//   t=ts, r=rot[i,j,k,r,acc], g=game_rot[i,j,k,r], a=accel[x,y,z],
+//   l=lin_accel[x,y,z], v=gravity[x,y,z], w=gyro[x,y,z], m=mag[x,y,z],
+//   s=steps, c=cal
 void outputJSON() {
   uint32_t nowMs = millis();
   if (nowMs - lastOutputMs < OUTPUT_INTERVAL_MS) return;
   lastOutputMs = nowMs;
 
-  char buf[512];
+  char buf[256];
   snprintf(buf, sizeof(buf),
-    "{\"ts\":%lu"
-    ",\"rot\":{\"qi\":%.4f,\"qj\":%.4f,\"qk\":%.4f,\"qr\":%.4f,\"acc\":%.4f}"
-    ",\"game_rot\":{\"qi\":%.4f,\"qj\":%.4f,\"qk\":%.4f,\"qr\":%.4f}"
-    ",\"accel\":{\"x\":%.3f,\"y\":%.3f,\"z\":%.3f}"
-    ",\"lin_accel\":{\"x\":%.3f,\"y\":%.3f,\"z\":%.3f}"
-    ",\"gravity\":{\"x\":%.3f,\"y\":%.3f,\"z\":%.3f}"
-    ",\"gyro\":{\"x\":%.4f,\"y\":%.4f,\"z\":%.4f}"
-    ",\"mag\":{\"x\":%.2f,\"y\":%.2f,\"z\":%.2f}"
-    ",\"steps\":%lu"
-    ",\"cal\":%u"
+    "{\"t\":%lu"
+    ",\"r\":[%.3f,%.3f,%.3f,%.3f,%.2f]"
+    ",\"g\":[%.3f,%.3f,%.3f,%.3f]"
+    ",\"a\":[%.2f,%.2f,%.2f]"
+    ",\"l\":[%.2f,%.2f,%.2f]"
+    ",\"v\":[%.2f,%.2f,%.2f]"
+    ",\"w\":[%.3f,%.3f,%.3f]"
+    ",\"m\":[%.1f,%.1f,%.1f]"
+    ",\"s\":%lu"
+    ",\"c\":%u"
     "}",
     (unsigned long)nowMs,
     sensorData.rot_qi,  sensorData.rot_qj,  sensorData.rot_qk,

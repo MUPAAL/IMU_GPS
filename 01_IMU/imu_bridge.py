@@ -175,6 +175,10 @@ class IMUPipeline:
             logger.warning(f"JSON parse error: {exc} | raw: {line[:80]}")
             return None
 
+        # Expand compact format (single-letter keys + arrays) from Arduino
+        if "r" in data and isinstance(data["r"], list):
+            data = self._expand_compact(data)
+
         rot = data.get("rot")
         if not rot:
             logger.warning("Frame missing 'rot' field, skipping.")
@@ -190,6 +194,70 @@ class IMUPipeline:
             north_offset_deg=self._north_offset_deg,
             extra=extra,
         )
+
+    @staticmethod
+    def _expand_compact(data: dict) -> dict:
+        """Expand compact single-letter keys + arrays into full named structure.
+
+        Arduino sends compact JSON to stay under the 256-byte USB CDC-ACM
+        buffer limit.  This method restores full field names so the rest of
+        the pipeline (IMUFrame, to_dict, frontend JS) needs no changes.
+
+        Compact key mapping:
+            t  → ts          (scalar, millis)
+            r  → rot         [qi, qj, qk, qr, acc]
+            g  → game_rot    [qi, qj, qk, qr]
+            a  → accel       [x, y, z]
+            l  → lin_accel   [x, y, z]
+            v  → gravity     [x, y, z]
+            w  → gyro        [x, y, z]
+            m  → mag         [x, y, z]
+            s  → steps       (scalar)
+            c  → cal         (scalar, 0-3)
+        """
+        out: dict = {}
+
+        if "t" in data:
+            out["ts"] = data["t"]
+
+        r = data.get("r")
+        if r and len(r) >= 4:
+            out["rot"] = {
+                "qi": r[0], "qj": r[1], "qk": r[2], "qr": r[3],
+                "acc": r[4] if len(r) > 4 else 0.0,
+            }
+
+        g = data.get("g")
+        if g and len(g) >= 4:
+            out["game_rot"] = {"qi": g[0], "qj": g[1], "qk": g[2], "qr": g[3]}
+
+        a = data.get("a")
+        if a and len(a) >= 3:
+            out["accel"] = {"x": a[0], "y": a[1], "z": a[2]}
+
+        l_ = data.get("l")
+        if l_ and len(l_) >= 3:
+            out["lin_accel"] = {"x": l_[0], "y": l_[1], "z": l_[2]}
+
+        v = data.get("v")
+        if v and len(v) >= 3:
+            out["gravity"] = {"x": v[0], "y": v[1], "z": v[2]}
+
+        w = data.get("w")
+        if w and len(w) >= 3:
+            out["gyro"] = {"x": w[0], "y": w[1], "z": w[2]}
+
+        m = data.get("m")
+        if m and len(m) >= 3:
+            out["mag"] = {"x": m[0], "y": m[1], "z": m[2]}
+
+        if "s" in data:
+            out["steps"] = data["s"]
+
+        if "c" in data:
+            out["cal"] = data["c"]
+
+        return out
 
     def _enrich_euler(self, frame: IMUFrame) -> IMUFrame:
         """Stage 2: compute ZYX Euler angles from quaternion and attach."""
