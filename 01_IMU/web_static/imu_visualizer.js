@@ -27,7 +27,7 @@ const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
 camera.position.set(1.5, 1.5, 2.5);
 camera.lookAt(0, 0, 0);
 const DEFAULT_CAMERA_POS = new THREE.Vector3(1.5, 1.5, 2.5);
-const TOP_VIEW_HEIGHT = 3.0;
+const TOP_VIEW_HEIGHT = 4.0;
 
 // Orbit controls
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -70,7 +70,7 @@ scene.add(worldAxis([0, 0, 1], 0x4444ff, 1.0)); // Z blue
 const headingArrow = new THREE.ArrowHelper(
   new THREE.Vector3(1, 0, 0),
   new THREE.Vector3(0, 0.01, 0),  // slight Y offset to avoid z-fighting with grid
-  1.6, 0xff8800, 0.18, 0.10
+  1.3, 0xff8800, 0.18, 0.10
 );
 scene.add(headingArrow);
 
@@ -123,7 +123,7 @@ chipMesh.position.y = 0.125;
 imuGroup.add(chipMesh);
 
 // Body-frame axes (rotate with the box)
-const ARROW_LEN = 0.7;
+const ARROW_LEN = 0.8;
 const bodyXArrow = new THREE.ArrowHelper(
   new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 0),
   ARROW_LEN, 0xff2222, 0.10, 0.07
@@ -228,8 +228,14 @@ function updateHeadingDisplay(deg) {
 }
 
 function getNorthVector() {
-  const rad = THREE.MathUtils.degToRad(northOffsetDeg);
-  return new THREE.Vector3(Math.cos(rad), 0, Math.sin(rad)).normalize();
+  // World convention: +X points to North.
+  return new THREE.Vector3(1, 0, 0);
+}
+
+function getCalibratedQuat(baseQuat) {
+  const yawOffsetRad = THREE.MathUtils.degToRad(northOffsetDeg);
+  const yawOffsetQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yawOffsetRad, 0, 'YXZ'));
+  return yawOffsetQuat.multiply(baseQuat.clone());
 }
 
 function setYawLock(enabled) {
@@ -268,27 +274,30 @@ function animate() {
   requestAnimationFrame(animate);
   // Smooth rotation
   currentQuat.slerp(targetQuat, SLERP_SPEED);
+  const calibratedQuat = getCalibratedQuat(currentQuat);
 
   // Lock Yaw: strip pitch & roll from imuGroup, keep only yaw
   if (lockYawOnly) {
-    const euler = new THREE.Euler().setFromQuaternion(currentQuat, 'YXZ');
+    const euler = new THREE.Euler().setFromQuaternion(calibratedQuat, 'YXZ');
     const yawOnlyQuat = new THREE.Quaternion().setFromEuler(
       new THREE.Euler(0, euler.y, 0, 'YXZ')
     );
     imuGroup.quaternion.copy(yawOnlyQuat);
   } else {
-    imuGroup.quaternion.copy(currentQuat);
+    imuGroup.quaternion.copy(calibratedQuat);
   }
 
-  // Project chip X-axis onto horizontal plane and update heading arrow
-  const chipX = new THREE.Vector3(1, 0, 0).applyQuaternion(currentQuat);
-  chipX.y = 0;
-  if (chipX.lengthSq() > 1e-4) {
-    chipX.normalize();
-    headingArrow.setDirection(chipX.clone());
+  // Use raw quaternion for calibration math, and calibrated quaternion for rendering.
+  const chipXRaw = new THREE.Vector3(1, 0, 0).applyQuaternion(currentQuat);
+  chipXRaw.y = 0;
+  const chipXCal = new THREE.Vector3(1, 0, 0).applyQuaternion(calibratedQuat);
+  chipXCal.y = 0;
+  if (chipXCal.lengthSq() > 1e-4) {
+    chipXCal.normalize();
+    headingArrow.setDirection(chipXCal.clone());
   }
   // Raw heading: 0° = +X world axis, increases clockwise from above
-  rawHeadingDeg = ((Math.atan2(chipX.z, chipX.x) * 180 / Math.PI) + 360) % 360;
+  rawHeadingDeg = ((Math.atan2(chipXRaw.z, chipXRaw.x) * 180 / Math.PI) + 360) % 360;
   const displayHeadingDeg = (rawHeadingDeg - northOffsetDeg + 360) % 360;
   updateHeadingDisplay(displayHeadingDeg);
   drawCompass(displayHeadingDeg);
@@ -470,6 +479,7 @@ const btnTopNorth = document.getElementById('btn-top-north');
 btnTopNorth.addEventListener('click', () => {
   setTopNorthView(!topNorthView);
 });
+setTopNorthView(true);
 
 // Pause / Resume toggle
 const btnPause = document.getElementById('btn-pause');
