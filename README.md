@@ -16,6 +16,12 @@ A real-time sensor fusion platform for farm robots, combining a BNO085 IMU with 
 └─────────────┘                     └──────────────┘           │   └──────────────┘
                                                                │          ▲
                                                                └──────────┘
+
+┌─────────────┐     serial/USB-CDC  ┌───────────────┐  WS :8796
+│  Farm-ng    │ ←──────────────────→│  robot_bridge │ ─────────→  Browser
+│  Amiga CAN  │   (O:/S: + WASD/V) │  (04_Robot)   │           http :8795
+│ (Feather M4)│                     └───────────────┘
+└─────────────┘
 ```
 
 Each bridge also serves its own static web UI over HTTP:
@@ -25,6 +31,7 @@ Each bridge also serves its own static web UI over HTTP:
 | `01_IMU` | 8765 | 8766 | 3D IMU orientation + sensor data cards |
 | `02_RTK` | 8775 | 8776 | Leaflet map + waypoint management |
 | `03_Nav` | 8785 | 8786 | Integrated dashboard (3D + map + all panels) |
+| `04_Robot` | 8795 | 8796 | Amiga robot controller (telemetry + WASD/velocity) |
 
 ## Directory Structure
 
@@ -57,6 +64,17 @@ IMU_GPS/
 │       ├── nav_visualizer.js    # Three.js + Leaflet combined
 │       ├── style.css            # Light theme
 │       └── assets/tiles → ../../02_RTK/web_static/assets/tiles
+│
+├── 04_Robot/
+│   ├── robot_bridge.py          # Amiga robot serial bridge (bidirectional, OOP + Pipeline)
+│   ├── requirements.txt
+│   └── web_static/
+│       ├── index.html
+│       ├── robot_visualizer.js  # Three.js top-down view + control panel
+│       └── style.css            # Dark theme + control widgets
+│
+├── CIRCUITPY/                   # CircuitPython firmware for Adafruit Feather M4 CAN
+│   └── code.py                  # Farm-ng Amiga CAN bridge (O:/S: output, WASD/V input)
 │
 └── CLAUDE.md                    # AI coding conventions
 ```
@@ -125,6 +143,15 @@ python nav_bridge.py --nav-port 8785 --imu-ws ws://localhost:8766 --rtk-ws ws://
 # Browser: http://localhost:8785
 ```
 
+### 5. Run Amiga robot controller
+
+```bash
+# Terminal 4 — Robot (requires CIRCUITPY Feather M4 CAN connected)
+cd 04_Robot
+python robot_bridge.py --port /dev/ttyACM1 --baud 115200 --ws-port 8795
+# Browser: http://localhost:8795
+```
+
 ## Module Details
 
 ### 01_IMU — IMU Bridge
@@ -144,6 +171,13 @@ python nav_bridge.py --nav-port 8785 --imu-ws ws://localhost:8766 --rtk-ws ws://
 - **Data flow**: `imu_bridge(WS) + rtk_bridge(WS) → NavLoop(10 Hz) → NavController → NavWebSocketServer → Browser`
 - **Layout**: upper 3D view (40%) + lower map (60%) | right data panel (320 px)
 - **Features**: all IMU + RTK features in a single page, unified WebSocket, heading computation, waypoint reach detection, north offset forwarding, top-north view
+
+### 04_Robot — Amiga Robot Controller
+
+- **Data flow**: `Serial ↔ SerialReader → RobotPipeline → asyncio.Queue → WebSocketServer → Browser`
+- **Pipeline stages**: `_parse → _enrich_state → _enrich_hz → _enrich_odometry → _serialize`
+- **Serial protocol**: `O:{speed},{ang_rate},{state},{soc}` telemetry (~20 Hz), `S:READY`/`S:ACTIVE` status; accepts WASD single-char and `V{speed},{ang_rate}\n` commands
+- **Features**: WASD keyboard/button control, velocity sliders, E-Stop, state toggle, battery SOC bar, speed/angular rate visualizers, odometry (heading + distance), Three.js top-down robot view
 
 ## Code Conventions
 

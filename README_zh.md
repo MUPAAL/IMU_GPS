@@ -16,6 +16,12 @@
 └─────────────┘                     └──────────────┘           │   └──────────────┘
                                                                │          ▲
                                                                └──────────┘
+
+┌─────────────┐     serial/USB-CDC  ┌───────────────┐  WS :8796
+│  Farm-ng    │ ←──────────────────→│  robot_bridge │ ─────────→  浏览器
+│  Amiga CAN  │   (O:/S: + WASD/V) │  (04_Robot)   │           http :8795
+│ (Feather M4)│                     └───────────────┘
+└─────────────┘
 ```
 
 每个桥接器同时在 HTTP 端口提供静态网页 UI：
@@ -25,6 +31,7 @@
 | `01_IMU` | 8765 | 8766 | 3D IMU 姿态 + 传感器数据卡片 |
 | `02_RTK` | 8775 | 8776 | Leaflet 地图 + 路径点管理 |
 | `03_Nav` | 8785 | 8786 | 集成面板（3D + 地图 + 全部数据面板） |
+| `04_Robot` | 8795 | 8796 | Amiga 机器人控制器（遥测 + WASD/速度控制） |
 
 ## 目录结构
 
@@ -57,6 +64,17 @@ IMU_GPS/
 │       ├── nav_visualizer.js    # Three.js + Leaflet 整合
 │       ├── style.css            # 浅色主题
 │       └── assets/tiles → ../../02_RTK/web_static/assets/tiles
+│
+├── 04_Robot/
+│   ├── robot_bridge.py          # Amiga 机器人串口桥接（双向，OOP + Pipeline）
+│   ├── requirements.txt
+│   └── web_static/
+│       ├── index.html
+│       ├── robot_visualizer.js  # Three.js 俯视图 + 控制面板
+│       └── style.css            # 暗色主题 + 控制组件
+│
+├── CIRCUITPY/                   # Adafruit Feather M4 CAN 的 CircuitPython 固件
+│   └── code.py                  # Farm-ng Amiga CAN 桥接（O:/S: 输出，WASD/V 输入）
 │
 └── CLAUDE.md                    # AI 编码规范
 ```
@@ -125,6 +143,15 @@ python nav_bridge.py --nav-port 8785 --imu-ws ws://localhost:8766 --rtk-ws ws://
 # 浏览器：http://localhost:8785
 ```
 
+### 5. 运行 Amiga 机器人控制器
+
+```bash
+# 终端 4 — Robot（需要连接 CIRCUITPY Feather M4 CAN）
+cd 04_Robot
+python robot_bridge.py --port /dev/ttyACM1 --baud 115200 --ws-port 8795
+# 浏览器：http://localhost:8795
+```
+
 ## 模块详情
 
 ### 01_IMU — IMU 桥接器
@@ -144,6 +171,13 @@ python nav_bridge.py --nav-port 8785 --imu-ws ws://localhost:8766 --rtk-ws ws://
 - **数据流**：`imu_bridge(WS) + rtk_bridge(WS) → NavLoop(10 Hz) → NavController → NavWebSocketServer → 浏览器`
 - **布局**：上方 3D 视图（40%）+ 下方地图（60%）| 右侧数据面板（320 px）
 - **功能**：在单页中整合所有 IMU + RTK 功能、统一 WebSocket 连接、航向计算、路径点到达判定、北偏校准转发、顶视北向视图
+
+### 04_Robot — Amiga 机器人控制器
+
+- **数据流**：`串口 ↔ SerialReader → RobotPipeline → asyncio.Queue → WebSocketServer → 浏览器`
+- **Pipeline 阶段**：`_parse → _enrich_state → _enrich_hz → _enrich_odometry → _serialize`
+- **串口协议**：`O:{speed},{ang_rate},{state},{soc}` 遥测（~20 Hz），`S:READY`/`S:ACTIVE` 状态；接受 WASD 单字符和 `V{speed},{ang_rate}\n` 速度命令
+- **功能**：WASD 键盘/按钮控制、速度滑块、紧急停止、状态切换、电池 SOC 进度条、速度/角速度可视化条、里程计（航向+距离）、Three.js 俯视机器人视图
 
 ## 代码规范
 
