@@ -83,9 +83,6 @@
         <div class="data-row" style="margin-top:4px">
           <span class="label">qr</span><span class="value" id="rot_qr">&ndash;</span>
         </div>
-        <div class="data-row">
-          <span class="label">acc</span><span class="value" id="rot_acc">&ndash; rad</span>
-        </div>
       </div>
 
       <!-- Heading -->
@@ -253,11 +250,11 @@
     async function boot() {
       try {
         await loadFirst(
-          ['./assets/vendor/leaflet/leaflet.css', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'],
+          ['./assets/vendor/leaflet/leaflet.css'],
           loadCss
         );
         await loadFirst(
-          ['./assets/vendor/leaflet/leaflet.js', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'],
+          ['./assets/vendor/leaflet/leaflet.js'],
           loadScript
         );
       } catch (err) {

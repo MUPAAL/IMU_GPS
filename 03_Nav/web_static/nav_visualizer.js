@@ -321,7 +321,7 @@ function drawCompass(deg) {
 const COMPASS_DIRS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
 function updateHeadingDisplay(deg) {
   const idx = Math.round(deg / 22.5) % 16;
-  setText('heading_deg', deg.toFixed(1) + '\u00b0');
+  setText('heading_deg', deg.toFixed(3) + '\u00b0');
   setText('heading_dir', COMPASS_DIRS[idx]);
 }
 
@@ -376,16 +376,15 @@ function updateImuPanel(imu) {
   if (!imu || !Object.keys(imu).length) return;
 
   const rot = imu.rot || {};
-  setText('rot_qi', fmt(rot.qi, 4));
-  setText('rot_qj', fmt(rot.qj, 4));
-  setText('rot_qk', fmt(rot.qk, 4));
-  setText('rot_qr', fmt(rot.qr, 4));
-  setText('rot_acc', rot.acc !== undefined ? fmt(rot.acc, 4) + ' rad' : '\u2013');
+  setText('rot_qi', fmt(rot.qi));
+  setText('rot_qj', fmt(rot.qj));
+  setText('rot_qk', fmt(rot.qk));
+  setText('rot_qr', fmt(rot.qr));
 
   const euler = imu.euler || {};
-  setText('euler_roll',  euler.roll  !== undefined ? fmt(euler.roll,  1) + '\u00b0' : '\u2013');
-  setText('euler_pitch', euler.pitch !== undefined ? fmt(euler.pitch, 1) + '\u00b0' : '\u2013');
-  setText('euler_yaw',   euler.yaw   !== undefined ? fmt(euler.yaw,   1) + '\u00b0' : '\u2013');
+  setText('euler_roll',  euler.roll  !== undefined ? fmt(euler.roll) + '\u00b0' : '\u2013');
+  setText('euler_pitch', euler.pitch !== undefined ? fmt(euler.pitch) + '\u00b0' : '\u2013');
+  setText('euler_yaw',   euler.yaw   !== undefined ? fmt(euler.yaw) + '\u00b0' : '\u2013');
 
   const accel = imu.accel || {};
   setText('accel_x', fmt(accel.x));
@@ -403,20 +402,20 @@ function updateImuPanel(imu) {
   setText('grav_z', fmt(grav.z));
 
   const gyro = imu.gyro || {};
-  setText('gyro_x', fmt(gyro.x, 4));
-  setText('gyro_y', fmt(gyro.y, 4));
-  setText('gyro_z', fmt(gyro.z, 4));
+  setText('gyro_x', fmt(gyro.x));
+  setText('gyro_y', fmt(gyro.y));
+  setText('gyro_z', fmt(gyro.z));
 
   const game = imu.game_rot || {};
-  setText('game_qi', fmt(game.qi, 4));
-  setText('game_qj', fmt(game.qj, 4));
-  setText('game_qk', fmt(game.qk, 4));
-  setText('game_qr', fmt(game.qr, 4));
+  setText('game_qi', fmt(game.qi));
+  setText('game_qj', fmt(game.qj));
+  setText('game_qk', fmt(game.qk));
+  setText('game_qr', fmt(game.qr));
 
   const mag = imu.mag || {};
-  setText('mag_x', fmt(mag.x, 2));
-  setText('mag_y', fmt(mag.y, 2));
-  setText('mag_z', fmt(mag.z, 2));
+  setText('mag_x', fmt(mag.x));
+  setText('mag_y', fmt(mag.y));
+  setText('mag_z', fmt(mag.z));
 
   setText('steps', imu.steps !== undefined ? imu.steps : '\u2013');
 
