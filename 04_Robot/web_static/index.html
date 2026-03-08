@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Amiga Robot Controller</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ===== Header ===== -->
+  <header>
+    <h1>Amiga Robot Controller</h1>
+    <div class="status-indicator">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Disconnected</span>
+    </div>
+  </header>
+
+  <!-- ===== Toolbar ===== -->
+  <div class="toolbar">
+    <button id="btn-reset-view" title="Reset camera to default position">Reset View</button>
+    <button id="btn-pause" class="btn-toggle" title="Freeze / resume live data">Pause</button>
+  </div>
+
+  <!-- ===== Main ===== -->
+  <div class="main-container">
+
+    <!-- 3D Canvas -->
+    <div id="canvas-container">
+      <!-- Three.js canvas injected here by robot_visualizer.js -->
+      <div class="canvas-hint">Top-down view of robot</div>
+    </div>
+
+    <!-- Data Panel -->
+    <div id="data-panel">
+
+      <!-- State Card -->
+      <div class="panel-section">
+        <h3>State</h3>
+        <div class="data-row">
+          <span class="label"><span class="state-dot boot" id="stateDot"></span>State</span>
+          <span class="value" id="stateName">BOOT</span>
+        </div>
+        <div class="data-row">
+          <span class="label">Firmware</span>
+          <span class="value" id="firmwareStatus">UNKNOWN</span>
+        </div>
+      </div>
+
+      <!-- Battery Card -->
+      <div class="panel-section">
+        <h3>Battery</h3>
+        <div class="data-row">
+          <span class="label">SOC</span>
+          <span class="value" id="batteryPct">0%</span>
+        </div>
+        <div class="battery-bar-container">
+          <div class="battery-bar" id="batteryBar" style="width:0%; background:var(--green)"></div>
+        </div>
+      </div>
+
+      <!-- Speed Card -->
+      <div class="panel-section">
+        <h3>Speed (m/s)</h3>
+        <div class="data-row">
+          <span class="label">Measured</span>
+          <span class="value" id="measSpeed">0.000</span>
+        </div>
+        <div class="speed-bar-container">
+          <div class="speed-bar-track">
+            <div class="speed-bar" id="measSpeedBar" style="left:50%;width:0%;background:var(--cyan)"></div>
+          </div>
+        </div>
+        <div class="data-row" style="margin-top:4px">
+          <span class="label">Commanded</span>
+          <span class="value" id="cmdSpeed">0.000</span>
+        </div>
+      </div>
+
+      <!-- Angular Rate Card -->
+      <div class="panel-section">
+        <h3>Angular Rate (rad/s)</h3>
+        <div class="data-row">
+          <span class="label">Measured</span>
+          <span class="value" id="measAngRate">0.000</span>
+        </div>
+        <div class="speed-bar-container">
+          <div class="speed-bar-track">
+            <div class="speed-bar" id="measAngRateBar" style="left:50%;width:0%;background:var(--orange)"></div>
+          </div>
+        </div>
+        <div class="data-row" style="margin-top:4px">
+          <span class="label">Commanded</span>
+          <span class="value" id="cmdAngRate">0.000</span>
+        </div>
+      </div>
+
+      <!-- Odometry Card -->
+      <div class="panel-section">
+        <h3>Odometry</h3>
+        <div class="data-row">
+          <span class="label">Heading</span>
+          <span class="value" id="headingDeg">0.0&deg;</span>
+        </div>
+        <div class="data-row">
+          <span class="label">Distance</span>
+          <span class="value" id="totalDistance">0.00 m</span>
+        </div>
+      </div>
+
+      <!-- Control Panel -->
+      <div class="panel-section">
+        <h3>Control</h3>
+
+        <!-- WASD grid -->
+        <div class="control-grid">
+          <div></div>
+          <button class="wasd-btn" id="btn-w" data-key="w">W</button>
+          <div></div>
+          <button class="wasd-btn" id="btn-a" data-key="a">A</button>
+          <button class="wasd-btn stop-btn" id="btn-stop" data-key=" ">STOP</button>
+          <button class="wasd-btn" id="btn-d" data-key="d">D</button>
+          <div></div>
+          <button class="wasd-btn" id="btn-s" data-key="s">S</button>
+          <div></div>
+        </div>
+
+        <!-- Toggle Ready/Active -->
+        <button class="toggle-state-btn" id="btn-toggle-state">Toggle READY / ACTIVE</button>
+
+        <!-- Speed slider -->
+        <div class="slider-group">
+          <label>
+            Speed
+            <span class="slider-value" id="sliderSpeedVal">0.000</span>
+          </label>
+          <input type="range" id="slider-speed" min="-1.0" max="1.0" step="0.05" value="0" />
+        </div>
+
+        <!-- Angular Rate slider -->
+        <div class="slider-group">
+          <label>
+            Ang Rate
+            <span class="slider-value" id="sliderAngRateVal">0.000</span>
+          </label>
+          <input type="range" id="slider-ang-rate" min="-1.0" max="1.0" step="0.05" value="0" />
+        </div>
+
+        <!-- E-STOP -->
+        <button class="estop-btn" id="btn-estop">E-STOP</button>
+      </div>
+
+      <!-- Status Row -->
+      <div class="status-row">
+        <div class="hz-display">
+          <span id="hzDisplay">&ndash; Hz</span>
+        </div>
+        <div class="uptime-display">
+          <span id="uptimeDisplay">Uptime: 0s</span>
+        </div>
+      </div>
+
+    </div><!-- #data-panel -->
+  </div><!-- .main-container -->
+
+  <!-- Three.js via CDN -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="robot_visualizer.js"></script>
+
+</body>
+</html>
