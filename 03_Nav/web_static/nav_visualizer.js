@@ -230,6 +230,12 @@ function makeLabel(text, position, color = '#888888') {
 scene.add(makeLabel('X', [1.15, 0, 0], '#ff6666'));
 scene.add(makeLabel('Y', [0, 1.15, 0], '#66ff66'));
 scene.add(makeLabel('Z', [0, 0, 1.15], '#6666ff'));
+const northLabel = makeLabel('N', [1.45, 0.02, 0], '#f85149');
+const southLabel = makeLabel('S', [-1.45, 0.02, 0], '#7d8590');
+const eastLabel = makeLabel('E', [0, 0.02, 1.45], '#7d8590');
+const westLabel = makeLabel('W', [0, 0.02, -1.45], '#7d8590');
+[northLabel, southLabel, eastLabel, westLabel].forEach((label) => label.scale.set(0.4, 0.2, 1));
+scene.add(northLabel, southLabel, eastLabel, westLabel);
 
 // IMU box group
 const imuGroup = new THREE.Group();
