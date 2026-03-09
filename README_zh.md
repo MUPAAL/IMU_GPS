@@ -1,6 +1,6 @@
 # IMU + RTK 导航系统
 
-面向农业机器人的实时传感器融合平台，整合 BNO085 惯性测量单元与 RTK-GPS 接收器。系统由三个独立模块组成 —— IMU 可视化、RTK 地图、以及集成导航面板 —— 通过 WebSocket 桥接通信，全部在浏览器中查看。
+面向农业机器人的实时传感器融合平台，整合 BNO085 惯性测量单元与 RTK-GPS 接收器。系统由七个独立模块组成 —— IMU 可视化、RTK 地图、集成导航面板、机器人控制、自主导航引擎、摄像头流、数据录制 —— 通过 WebSocket 桥接通信，全部在浏览器中查看。
 
 ## 系统架构
 
@@ -21,7 +21,23 @@
 │  Farm-ng    │ ←──────────────────→│  robot_bridge │ ─────────→  浏览器
 │  Amiga CAN  │   (O:/S: + WASD/V) │  (04_Robot)   │           http :8795
 │ (Feather M4)│                     └───────────────┘
-└─────────────┘
+└─────────────┘                            ▲
+                                           │
+                    ┌──────────────────┐    │  WS :8806
+                    │  autonav_bridge  │────┤─────────→  浏览器
+                    │  (05_AutoNav)    │    │           http :8805
+                    └──────────────────┘    │
+                      ▲ IMU  ▲ RTK         │ 速度指令
+                      │      │             │
+                    ┌──────────────────┐    │  WS :8826
+                    │ recorder_bridge  │────┘─────────→  浏览器
+                    │  (07_Recorder)   │              http :8825
+                    └──────────────────┘
+
+┌─────────────┐                     ┌───────────────┐  WS :8816
+│  OAK-D      │ ──────────────────→ │ camera_bridge │ ─────────→  浏览器
+│  摄像头     │     depthai / USB   │  (06_Camera)  │           http :8815
+└─────────────┘                     └───────────────┘        MJPEG :8080/8081
 ```
 
 每个桥接器同时在 HTTP 端口提供静态网页 UI：
@@ -32,6 +48,9 @@
 | `02_RTK` | 8775 | 8776 | Leaflet 地图 + 路径点管理 |
 | `03_Nav` | 8785 | 8786 | 集成面板（3D + 地图 + 全部数据面板） |
 | `04_Robot` | 8795 | 8796 | Amiga 机器人控制器（遥测 + WASD/速度控制） |
+| `05_AutoNav` | 8805 | 8806 | 自主导航引擎（GPS+IMU PID/PurePursuit 控制） |
+| `06_Camera` | 8815 | 8816 | OAK-D 摄像头 MJPEG 流（视频在 8080/8081） |
+| `07_Recorder` | 8825 | 8826 | 多源 CSV 数据录制器 |
 
 ## 目录结构
 
@@ -72,6 +91,30 @@ IMU_GPS/
 │       ├── index.html
 │       ├── robot_visualizer.js  # Three.js 俯视图 + 控制面板
 │       └── style.css            # 暗色主题 + 控制组件
+│
+├── 05_AutoNav/
+│   ├── autonav_bridge.py        # 自主导航引擎（PID/PurePursuit + GPS 滤波器）
+│   ├── requirements.txt         # websockets, numpy
+│   └── web_static/
+│       ├── index.html
+│       ├── autonav_visualizer.js # Leaflet 地图 + 航点 + 覆盖路径规划
+│       └── style.css            # 浅色主题
+│
+├── 06_Camera/
+│   ├── camera_bridge.py         # OAK-D MJPEG 流 + WS 控制
+│   ├── requirements.txt         # websockets, depthai, opencv-python, numpy
+│   └── web_static/
+│       ├── index.html
+│       ├── camera_visualizer.js  # MJPEG 显示 + 摄像头切换
+│       └── style.css            # 暗色主题
+│
+├── 07_Recorder/
+│   ├── recorder_bridge.py       # 多源 CSV 录制器（IMU+RTK+Robot）
+│   ├── requirements.txt         # websockets
+│   └── web_static/
+│       ├── index.html
+│       ├── recorder_visualizer.js # 录制控制 + 文件管理
+│       └── style.css            # 浅色主题
 │
 ├── CIRCUITPY/                   # Adafruit Feather M4 CAN 的 CircuitPython 固件
 │   └── code.py                  # Farm-ng Amiga CAN 桥接（O:/S: 输出，WASD/V 输入）
@@ -152,6 +195,38 @@ python robot_bridge.py --port /dev/ttyACM1 --baud 115200 --ws-port 8795
 # 浏览器：http://localhost:8795
 ```
 
+### 6. 运行自主导航
+
+```bash
+# 需要 IMU + RTK + Robot 桥接器已在运行
+pip install numpy
+cd 05_AutoNav
+python autonav_bridge.py \
+  --imu-ws ws://localhost:8766 --rtk-ws ws://localhost:8776 \
+  --robot-ws ws://localhost:8796
+# 浏览器：http://localhost:8805 → 上传航点 CSV → 开始导航
+```
+
+### 7. 运行摄像头流
+
+```bash
+# 需要连接 OAK-D 摄像头
+pip install depthai opencv-python numpy
+cd 06_Camera
+python camera_bridge.py --cam1-ip 10.95.76.11
+# 浏览器：http://localhost:8815（控制面板）
+# MJPEG：http://localhost:8080（视频流）
+```
+
+### 8. 运行数据录制器
+
+```bash
+# 需要 IMU + RTK + Robot 桥接器已在运行
+cd 07_Recorder
+python recorder_bridge.py
+# 浏览器：http://localhost:8825 → 开始录制 → 下载 CSV
+```
+
 ## 模块详情
 
 ### 01_IMU — IMU 桥接器
@@ -178,6 +253,29 @@ python robot_bridge.py --port /dev/ttyACM1 --baud 115200 --ws-port 8795
 - **Pipeline 阶段**：`_parse → _enrich_state → _enrich_hz → _enrich_odometry → _serialize`
 - **串口协议**：`O:{speed},{ang_rate},{state},{soc}` 遥测（~20 Hz），`S:READY`/`S:ACTIVE` 状态；接受 WASD 单字符和 `V{speed},{ang_rate}\n` 速度命令
 - **功能**：WASD 键盘/按钮控制、速度滑块、紧急停止、状态切换、电池 SOC 进度条、速度/角速度可视化条、里程计（航向+距离）、Three.js 俯视机器人视图
+
+### 05_AutoNav — 自主导航引擎
+
+- **数据流**：`imu_bridge(WS) + rtk_bridge(WS) + robot_bridge(WS) → AutoNavPipeline → 速度指令 → robot_bridge(WS)`
+- **组件**：GeoUtils、MovingAverageFilter、KalmanFilter（4D 位置+速度）、PIDController、P2PController、PurePursuitController、WaypointManager、CoveragePlanner（Boustrophedon 蛇形覆盖）
+- **状态机**：`IDLE → NAVIGATING → FINISHED`
+- **导航模式**：P2P（点对点方位角控制）/ Pure Pursuit（前视点路径跟踪）
+- **滤波模式**：滑动平均（GPS 窗口均值）/ 卡尔曼（4D，含 IMU 加速度 + 里程计速度观测）
+- **功能**：CSV 航点上传、自适应到达容差（根据 RTK 质量调整）、GPS 超时检测、覆盖路径生成（割草机模式）、Leaflet 地图 UI
+
+### 06_Camera — OAK-D 摄像头 MJPEG 流
+
+- **数据流**：`OAK-D 摄像头 → FrameSource → MJPEGServer（HTTP multipart）→ 浏览器 <img>`
+- **组件**：FrameSource（ABC）、SimpleColorSource（depthai v3）、MJPEGServer、CameraPipeline
+- **功能**：双摄像头支持（cam1/cam2 独立 MJPEG 端口）、摄像头切换、启停控制、FPS 追踪、WS 状态广播（1 Hz）
+- **注意**：视频走 HTTP MJPEG，WebSocket 仅用于控制/状态
+
+### 07_Recorder — 多源数据录制器
+
+- **数据流**：`imu_bridge(WS) + rtk_bridge(WS) + robot_bridge(WS) → RecordLoop(5 Hz) → DataRecorder → CSV`
+- **组件**：DataRecorder（线程安全 CSV 写入器）、RecorderPipeline、三个 WS 客户端（只读）
+- **CSV 列**：时间戳、四元数（i/j/k/r）、欧拉角（yaw/pitch/roll）、GPS（经纬度/高度/定位/卫星/HDOP/速度/航向）、机器人（速度/角速度/状态/电量/距离/航向）
+- **功能**：开始/停止录制、文件列表（下载/删除）、数据源连接状态指示、双 HTTP 路径（静态 UI + CSV 文件下载）
 
 ## 代码规范
 

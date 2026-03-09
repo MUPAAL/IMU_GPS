@@ -1,0 +1,12 @@
+# Robot Side Dependencies（00_robot_side）
+# 安装：pip install -r requirements.txt
+
+# Serial Communication（Feather M4 CAN）
+pyserial>=3.5
+
+# Web Joystick Controller（WebSocket Server）
+websockets>=11.0
+
+# OAK-D Cam + IMU（Optional，Run In Degraded Mode Without OAK-D）
+# depthai>=2.24
+# opencv-python>=4.8

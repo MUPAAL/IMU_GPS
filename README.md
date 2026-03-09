@@ -1,6 +1,6 @@
 # IMU + RTK Navigation System
 
-A real-time sensor fusion platform for farm robots, combining a BNO085 IMU with an RTK-GPS receiver. Three independent modules — IMU visualization, RTK mapping, and an integrated Nav dashboard — communicate via WebSocket bridges, all viewable in a browser.
+A real-time sensor fusion platform for farm robots, combining a BNO085 IMU with an RTK-GPS receiver. Seven independent modules — IMU visualization, RTK mapping, integrated Nav dashboard, robot control, autonomous navigation, camera streaming, and data recording — communicate via WebSocket bridges, all viewable in a browser.
 
 ## Architecture
 
@@ -21,7 +21,23 @@ A real-time sensor fusion platform for farm robots, combining a BNO085 IMU with 
 │  Farm-ng    │ ←──────────────────→│  robot_bridge │ ─────────→  Browser
 │  Amiga CAN  │   (O:/S: + WASD/V) │  (04_Robot)   │           http :8795
 │ (Feather M4)│                     └───────────────┘
-└─────────────┘
+└─────────────┘                            ▲
+                                           │
+                    ┌──────────────────┐    │  WS :8806
+                    │  autonav_bridge  │────┤─────────→  Browser
+                    │  (05_AutoNav)    │    │           http :8805
+                    └──────────────────┘    │
+                      ▲ IMU  ▲ RTK         │ velocity commands
+                      │      │             │
+                    ┌──────────────────┐    │  WS :8826
+                    │ recorder_bridge  │────┘─────────→  Browser
+                    │  (07_Recorder)   │              http :8825
+                    └──────────────────┘
+
+┌─────────────┐                     ┌───────────────┐  WS :8816
+│  OAK-D      │ ──────────────────→ │ camera_bridge │ ─────────→  Browser
+│  Camera     │     depthai / USB   │  (06_Camera)  │           http :8815
+└─────────────┘                     └───────────────┘        MJPEG :8080/8081
 ```
 
 Each bridge also serves its own static web UI over HTTP:
@@ -32,6 +48,9 @@ Each bridge also serves its own static web UI over HTTP:
 | `02_RTK` | 8775 | 8776 | Leaflet map + waypoint management |
 | `03_Nav` | 8785 | 8786 | Integrated dashboard (3D + map + all panels) |
 | `04_Robot` | 8795 | 8796 | Amiga robot controller (telemetry + WASD/velocity) |
+| `05_AutoNav` | 8805 | 8806 | Autonomous navigation (GPS+IMU PID/PurePursuit) |
+| `06_Camera` | 8815 | 8816 | OAK-D camera MJPEG streaming (video on 8080/8081) |
+| `07_Recorder` | 8825 | 8826 | Multi-source CSV data recorder |
 
 ## Directory Structure
 
@@ -72,6 +91,30 @@ IMU_GPS/
 │       ├── index.html
 │       ├── robot_visualizer.js  # Three.js top-down view + control panel
 │       └── style.css            # Dark theme + control widgets
+│
+├── 05_AutoNav/
+│   ├── autonav_bridge.py        # Autonomous nav engine (PID/PurePursuit + GPS filters)
+│   ├── requirements.txt         # websockets, numpy
+│   └── web_static/
+│       ├── index.html
+│       ├── autonav_visualizer.js # Leaflet map + waypoints + coverage planner
+│       └── style.css            # Light theme
+│
+├── 06_Camera/
+│   ├── camera_bridge.py         # OAK-D MJPEG streaming + WS control
+│   ├── requirements.txt         # websockets, depthai, opencv-python, numpy
+│   └── web_static/
+│       ├── index.html
+│       ├── camera_visualizer.js  # MJPEG display + camera switch
+│       └── style.css            # Dark theme
+│
+├── 07_Recorder/
+│   ├── recorder_bridge.py       # Multi-source CSV recorder (IMU+RTK+Robot)
+│   ├── requirements.txt         # websockets
+│   └── web_static/
+│       ├── index.html
+│       ├── recorder_visualizer.js # Recording control + file management
+│       └── style.css            # Light theme
 │
 ├── CIRCUITPY/                   # CircuitPython firmware for Adafruit Feather M4 CAN
 │   └── code.py                  # Farm-ng Amiga CAN bridge (O:/S: output, WASD/V input)
@@ -152,6 +195,38 @@ python robot_bridge.py --port /dev/ttyACM1 --baud 115200 --ws-port 8795
 # Browser: http://localhost:8795
 ```
 
+### 6. Run autonomous navigation
+
+```bash
+# Requires IMU + RTK + Robot bridges running
+pip install numpy
+cd 05_AutoNav
+python autonav_bridge.py \
+  --imu-ws ws://localhost:8766 --rtk-ws ws://localhost:8776 \
+  --robot-ws ws://localhost:8796
+# Browser: http://localhost:8805 → Upload waypoint CSV → Start Nav
+```
+
+### 7. Run camera streaming
+
+```bash
+# Requires OAK-D camera connected
+pip install depthai opencv-python numpy
+cd 06_Camera
+python camera_bridge.py --cam1-ip 10.95.76.11
+# Browser: http://localhost:8815 (control panel)
+# MJPEG:   http://localhost:8080 (direct video stream)
+```
+
+### 8. Run data recorder
+
+```bash
+# Requires IMU + RTK + Robot bridges running
+cd 07_Recorder
+python recorder_bridge.py
+# Browser: http://localhost:8825 → Start Recording → Download CSV
+```
+
 ## Module Details
 
 ### 01_IMU — IMU Bridge
@@ -178,6 +253,29 @@ python robot_bridge.py --port /dev/ttyACM1 --baud 115200 --ws-port 8795
 - **Pipeline stages**: `_parse → _enrich_state → _enrich_hz → _enrich_odometry → _serialize`
 - **Serial protocol**: `O:{speed},{ang_rate},{state},{soc}` telemetry (~20 Hz), `S:READY`/`S:ACTIVE` status; accepts WASD single-char and `V{speed},{ang_rate}\n` commands
 - **Features**: WASD keyboard/button control, velocity sliders, E-Stop, state toggle, battery SOC bar, speed/angular rate visualizers, odometry (heading + distance), Three.js top-down robot view
+
+### 05_AutoNav — Autonomous Navigation Engine
+
+- **Data flow**: `imu_bridge(WS) + rtk_bridge(WS) + robot_bridge(WS) → AutoNavPipeline → velocity commands → robot_bridge(WS)`
+- **Components**: GeoUtils, MovingAverageFilter, KalmanFilter (4D position+velocity), PIDController, P2PController, PurePursuitController, WaypointManager, CoveragePlanner (Boustrophedon)
+- **State machine**: `IDLE → NAVIGATING → FINISHED`
+- **Nav modes**: P2P (point-to-point bearing control) / Pure Pursuit (lookahead path tracking)
+- **Filter modes**: Moving Average (sliding window GPS) / Kalman (4D with IMU acceleration + odometry velocity)
+- **Features**: CSV waypoint upload, adaptive arrival tolerance (RTK quality-based), GPS timeout detection, coverage path generation (lawnmower pattern), Leaflet map UI
+
+### 06_Camera — OAK-D Camera MJPEG Streaming
+
+- **Data flow**: `OAK-D Camera → FrameSource → MJPEGServer (HTTP multipart) → Browser <img>`
+- **Components**: FrameSource (ABC), SimpleColorSource (depthai v3), MJPEGServer, CameraPipeline
+- **Features**: dual camera support (cam1/cam2 on separate MJPEG ports), camera switching, start/stop control, FPS tracking, WS status broadcast (1 Hz)
+- **Note**: Video via HTTP MJPEG, WebSocket only for control/status
+
+### 07_Recorder — Multi-Source Data Recorder
+
+- **Data flow**: `imu_bridge(WS) + rtk_bridge(WS) + robot_bridge(WS) → RecordLoop(5 Hz) → DataRecorder → CSV`
+- **Components**: DataRecorder (thread-safe CSV writer), RecorderPipeline, three WS clients (read-only)
+- **CSV columns**: timestamp, quaternion (i/j/k/r), euler (yaw/pitch/roll), GPS (lat/lon/alt/fix/sats/hdop/speed/track), robot (speed/ang_rate/state/soc/distance/heading)
+- **Features**: start/stop recording, file list with download/delete, data source connection indicators, dual HTTP paths (static UI + CSV file serving)
 
 ## Code Conventions
 

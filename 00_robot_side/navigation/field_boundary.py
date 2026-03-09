@@ -1,0 +1,159 @@
+"""
+field_boundary — 田地边界提取工具
+
+支持两种边界来源：
+  1. 从 data_log/*.csv（机器人行驶录制数据）提取轨迹点，构建凸包
+  2. 直接接受手动输入的经纬度列表
+
+用法示例：
+    from navigation.field_boundary import extract_boundary, boundary_from_list
+
+    # 从录制 CSV 提取凸包
+    hull = extract_boundary("data_log/robot_data_20260304_123456.csv")
+
+    # 手动输入四个角点
+    boundary = boundary_from_list([
+        (37.0000, -122.0003),
+        (37.0002, -122.0003),
+        (37.0002, -122.0000),
+        (37.0000, -122.0000),
+    ])
+"""
+
+import csv
+import logging
+from pathlib import Path
+from typing import List, Tuple
+
+logger = logging.getLogger(__name__)
+
+
+def load_from_csv(filepath: str | Path) -> List[Tuple[float, float]]:
+    """从录制的 data_log CSV 提取所有有效 GPS 轨迹点。
+
+    CSV 预期包含 lat、lon 列（由 data_recorder.py 生成）。
+
+    Args:
+        filepath: CSV 文件路径
+
+    Returns:
+        GPS 坐标列表 [(lat, lon), ...]，仅包含 lat/lon 均有效的行
+    """
+    filepath = Path(filepath)
+    points: List[Tuple[float, float]] = []
+    try:
+        with filepath.open(encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    lat_str = row.get("lat", "").strip()
+                    lon_str = row.get("lon", "").strip()
+                    if not lat_str or not lon_str:
+                        continue
+                    lat = float(lat_str)
+                    lon = float(lon_str)
+                    # 过滤无效 GPS（(0,0) 为 GPS 未就绪时的默认值）
+                    if lat == 0.0 and lon == 0.0:
+                        continue
+                    points.append((lat, lon))
+                except (ValueError, TypeError):
+                    continue
+    except OSError as e:
+        logger.error(f"FieldBoundary: 无法读取文件 {filepath}: {e}")
+        raise
+    logger.info(f"FieldBoundary: 从 {filepath.name} 提取 {len(points)} 个轨迹点")
+    return points
+
+
+def convex_hull(points: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    """Andrew's monotone chain 凸包算法（O(n log n)）。
+
+    Args:
+        points: GPS 坐标列表 [(lat, lon), ...]
+
+    Returns:
+        凸包顶点列表（逆时针顺序），若点数 < 3 返回原列表的副本
+    """
+    if len(points) < 3:
+        return list(points)
+
+    # 按 lon 升序（lon 相同则按 lat 升序）排序
+    pts = sorted(points, key=lambda p: (p[1], p[0]))
+
+    def cross(o: Tuple[float, float], a: Tuple[float, float], b: Tuple[float, float]) -> float:
+        """有符号面积（叉积）：> 0 逆时针，≤ 0 顺时针或共线。"""
+        return (a[1] - o[1]) * (b[0] - o[0]) - (a[0] - o[0]) * (b[1] - o[1])
+
+    lower: List[Tuple[float, float]] = []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+
+    upper: List[Tuple[float, float]] = []
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+
+    # lower[-1] == upper[0] == pts[-1]，upper[-1] == lower[0] == pts[0]，各去掉一个端点
+    hull = lower[:-1] + upper[:-1]
+    logger.info(f"FieldBoundary: 凸包计算完成，{len(points)} 点 → {len(hull)} 个顶点")
+    return hull
+
+
+def extract_boundary(
+    filepath: str | Path,
+    method: str = "convex_hull",
+    downsample: int = 10,
+) -> List[Tuple[float, float]]:
+    """从录制 CSV 提取田地边界多边形。
+
+    Args:
+        filepath   : data_log CSV 路径
+        method     : "convex_hull"（默认，返回凸包）或 "raw"（返回全部轨迹点）
+        downsample : 凸包前先按此步长降采样，减少计算量（默认每 10 行取 1 行）
+
+    Returns:
+        边界 GPS 多边形 [(lat, lon), ...]
+
+    Raises:
+        OSError        : 文件不可读
+        ValueError     : 提取到的点数 < 3
+    """
+    points = load_from_csv(filepath)
+    if not points:
+        raise ValueError(f"从 {filepath} 未提取到有效 GPS 点")
+    if len(points) < 3:
+        raise ValueError(f"GPS 点数 ({len(points)}) 不足以构建多边形（至少需要 3 点）")
+
+    if method == "raw":
+        return points
+
+    # 降采样
+    if downsample > 1 and len(points) > downsample:
+        sampled = points[::downsample]
+        logger.info(f"FieldBoundary: 降采样 {len(points)} → {len(sampled)} 点")
+    else:
+        sampled = points
+
+    return convex_hull(sampled)
+
+
+def boundary_from_list(coords: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    """直接从手动输入的 (lat, lon) 列表构建边界。
+
+    Args:
+        coords: [(lat, lon), ...]，至少 3 个顶点
+
+    Returns:
+        边界坐标列表（原样返回）
+
+    Raises:
+        ValueError: 点数不足
+    """
+    if len(coords) < 3:
+        raise ValueError(
+            f"边界至少需要 3 个顶点，当前只有 {len(coords)} 个"
+        )
+    return list(coords)

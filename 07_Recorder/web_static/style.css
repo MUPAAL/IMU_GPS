@@ -1,0 +1,331 @@
+/* Data Recorder — Light Theme */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: #f5f7f4;
+  --panel: #ffffff;
+  --text: #202622;
+  --muted: #5d6b61;
+  --line: #d5ddd6;
+  --ok: #1f8f46;
+  --warn: #b57812;
+  --bad: #c23a27;
+  --accent: #1b6c8d;
+  --record-red: #e53935;
+}
+
+body {
+  background: linear-gradient(120deg, #eef4f6 0%, #f8f4ec 100%);
+  color: var(--text);
+  font-family: "IBM Plex Sans", "Noto Sans SC", sans-serif;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ===== Header ===== */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+header h1 {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--bad);
+  transition: background 0.3s;
+}
+
+.status-dot.connected {
+  background: var(--ok);
+  box-shadow: 0 0 6px var(--ok);
+}
+
+/* ===== Main layout ===== */
+.main-container {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ===== Control Panel ===== */
+.control-panel {
+  padding: 12px;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+}
+
+.panel-section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.panel-section h3 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 4px;
+  margin-bottom: 10px;
+}
+
+.data-row {
+  display: flex;
+  justify-content: space-between;
+  line-height: 1.8;
+  font-size: 0.88rem;
+}
+
+.data-row .label { color: var(--muted); }
+.data-row .value {
+  text-align: right;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.82rem;
+}
+
+/* ===== Record status ===== */
+.record-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.record-indicator {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: background 0.3s;
+}
+
+.record-indicator.recording {
+  background: var(--record-red);
+  animation: blink-record 1s infinite alternate;
+}
+
+@keyframes blink-record {
+  from { opacity: 1; box-shadow: 0 0 6px var(--record-red); }
+  to   { opacity: 0.4; box-shadow: none; }
+}
+
+/* ===== Buttons ===== */
+.button-group {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.btn-start, .btn-stop {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-start {
+  background: var(--ok);
+  color: #fff;
+  border-color: var(--ok);
+}
+
+.btn-start:hover:not(:disabled) {
+  background: #178a3d;
+}
+
+.btn-start:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-stop {
+  background: var(--bad);
+  color: #fff;
+  border-color: var(--bad);
+}
+
+.btn-stop:hover:not(:disabled) {
+  background: #a8321f;
+}
+
+.btn-stop:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ===== Source indicators ===== */
+.source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
+.source-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--bad);
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+
+.source-dot.connected {
+  background: var(--ok);
+  box-shadow: 0 0 4px var(--ok);
+}
+
+/* ===== File list ===== */
+.file-panel {
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+}
+
+.file-empty {
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 20px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 0.82rem;
+}
+
+.file-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.file-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-meta {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.file-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.file-actions button {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-family: inherit;
+  cursor: pointer;
+  background: var(--panel);
+  transition: all 0.15s;
+}
+
+.file-actions .btn-download {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.file-actions .btn-download:hover {
+  background: #e8f4f8;
+}
+
+.file-actions .btn-delete {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
+.file-actions .btn-delete:hover {
+  background: #fde8e8;
+}
+
+/* ===== Scrollbar ===== */
+.file-list::-webkit-scrollbar,
+.control-panel::-webkit-scrollbar {
+  width: 4px;
+}
+
+.file-list::-webkit-scrollbar-track,
+.control-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.file-list::-webkit-scrollbar-thumb,
+.control-panel::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 2px;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 700px) {
+  .main-container {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .control-panel {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+}

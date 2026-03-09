@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Camera Controller</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ===== Header ===== -->
+  <header>
+    <h1>Camera Controller</h1>
+    <div class="status-indicator">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Disconnected</span>
+    </div>
+  </header>
+
+  <!-- ===== Main ===== -->
+  <div class="main-container">
+
+    <!-- Video Display -->
+    <div class="video-container">
+      <img id="mjpegStream" class="mjpeg-img" alt="Camera stream" />
+      <div class="video-overlay" id="videoOverlay">
+        <span>Stream not active</span>
+      </div>
+    </div>
+
+    <!-- Control Panel -->
+    <div id="data-panel">
+
+      <!-- Camera Selection -->
+      <div class="panel-section">
+        <h3>Camera</h3>
+        <div class="cam-select">
+          <button class="cam-btn active" id="btnCam1" data-cam="1">Camera 1</button>
+          <button class="cam-btn" id="btnCam2" data-cam="2">Camera 2</button>
+        </div>
+      </div>
+
+      <!-- Stream Control -->
+      <div class="panel-section">
+        <h3>Stream</h3>
+        <div class="data-row">
+          <span class="label">Status</span>
+          <span class="value" id="streamStatus">Stopped</span>
+        </div>
+        <div class="data-row">
+          <span class="label">FPS</span>
+          <span class="value" id="streamFps">0.0</span>
+        </div>
+        <div class="data-row">
+          <span class="label">Resolution</span>
+          <span class="value" id="streamRes">—</span>
+        </div>
+        <div class="button-group">
+          <button class="btn-start" id="btnStartStream">Start</button>
+          <button class="btn-stop" id="btnStopStream">Stop</button>
+        </div>
+      </div>
+
+      <!-- MJPEG URLs -->
+      <div class="panel-section">
+        <h3>MJPEG URLs</h3>
+        <div class="data-row url-row">
+          <span class="label">Cam 1</span>
+          <a class="value url-link" id="mjpegUrl1" href="#" target="_blank">—</a>
+        </div>
+        <div class="data-row url-row">
+          <span class="label">Cam 2</span>
+          <a class="value url-link" id="mjpegUrl2" href="#" target="_blank">—</a>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <script src="camera_visualizer.js"></script>
+
+</body>
+</html>
