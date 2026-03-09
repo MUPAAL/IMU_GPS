@@ -21,6 +21,10 @@ const btnStartStream = document.getElementById("btnStartStream");
 const btnStopStream  = document.getElementById("btnStopStream");
 const mjpegUrl1     = document.getElementById("mjpegUrl1");
 const mjpegUrl2     = document.getElementById("mjpegUrl2");
+const pluginSelect  = document.getElementById("pluginSelect");
+const activePlugin  = document.getElementById("activePlugin");
+const pluginConfigContainer = document.getElementById("pluginConfigContainer");
+const btnApplyPlugin = document.getElementById("btnApplyPlugin");
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
 
@@ -30,6 +34,7 @@ const WS_URL  = `ws://${window.location.hostname}:${WS_PORT}`;
 let ws = null;
 let reconnectTimer = null;
 let currentCam = 1;
+let lastPluginListHash = "";
 
 function connect() {
   ws = new WebSocket(WS_URL);
@@ -98,6 +103,15 @@ function updateUI(data) {
   mjpegUrl2.href = url2;
   mjpegUrl2.textContent = url2;
 
+  // Plugin info
+  if (data.active_plugin !== undefined) {
+    activePlugin.textContent = data.active_plugin || "—";
+  }
+  if (data.available_plugins) {
+    updatePluginSelect(data.available_plugins, data.active_plugin);
+    renderPluginConfig(data.available_plugins, data.active_plugin, data.active_plugin_config);
+  }
+
   // Update MJPEG <img> source
   if (isStreaming) {
     const streamUrl = currentCam === 1 ? url1 : url2;
@@ -129,6 +143,70 @@ btnStartStream.addEventListener("click", () => {
 
 btnStopStream.addEventListener("click", () => {
   send({ type: "stop_stream", cam_id: currentCam });
+});
+
+// ── Plugin Controls ─────────────────────────────────────────────────────────
+
+function updatePluginSelect(plugins, activeName) {
+  // Hash to avoid unnecessary DOM rebuilds
+  const hash = plugins.map(p => p.name).join(",");
+  if (hash === lastPluginListHash) {
+    // Just update selection
+    pluginSelect.value = activeName || "";
+    return;
+  }
+  lastPluginListHash = hash;
+  pluginSelect.innerHTML = "";
+  plugins.forEach(p => {
+    const opt = document.createElement("option");
+    opt.value = p.name;
+    opt.textContent = p.label || p.name;
+    pluginSelect.appendChild(opt);
+  });
+  pluginSelect.value = activeName || "";
+}
+
+function renderPluginConfig(plugins, activeName, currentConfig) {
+  const plugin = plugins.find(p => p.name === activeName);
+  if (!plugin || !plugin.config_schema || plugin.config_schema.length === 0) {
+    pluginConfigContainer.innerHTML = "";
+    return;
+  }
+  // Only rebuild if plugin changed
+  if (pluginConfigContainer.dataset.plugin === activeName) return;
+  pluginConfigContainer.dataset.plugin = activeName;
+  pluginConfigContainer.innerHTML = "";
+  plugin.config_schema.forEach(field => {
+    const row = document.createElement("div");
+    row.className = "config-field";
+    const label = document.createElement("label");
+    label.textContent = field.label || field.key;
+    label.setAttribute("for", "cfg_" + field.key);
+    const input = document.createElement("input");
+    input.id = "cfg_" + field.key;
+    input.name = field.key;
+    input.type = field.type === "int" ? "number" : "text";
+    const val = currentConfig && currentConfig[field.key] != null
+      ? currentConfig[field.key] : (field.default != null ? field.default : "");
+    input.value = val;
+    input.placeholder = field.default != null ? String(field.default) : "";
+    row.appendChild(label);
+    row.appendChild(input);
+    pluginConfigContainer.appendChild(row);
+  });
+}
+
+btnApplyPlugin.addEventListener("click", () => {
+  const pluginName = pluginSelect.value;
+  const config = {};
+  pluginConfigContainer.querySelectorAll("input").forEach(input => {
+    const val = input.value.trim();
+    if (val === "") return;
+    config[input.name] = input.type === "number" ? parseInt(val, 10) : val;
+  });
+  send({ type: "switch_plugin", plugin_name: pluginName, config: config });
+  // Force config re-render on next update
+  pluginConfigContainer.dataset.plugin = "";
 });
 
 // ── Init ─────────────────────────────────────────────────────────────────────

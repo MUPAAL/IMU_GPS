@@ -101,11 +101,14 @@ IMU_GPS/
 │       └── style.css            # Light theme
 │
 ├── 06_Camera/
-│   ├── camera_bridge.py         # OAK-D MJPEG streaming + WS control
+│   ├── camera_bridge.py         # OAK-D MJPEG streaming + plugin orchestrator
+│   ├── plugins/
+│   │   ├── __init__.py          # FrameSource ABC + registry + auto-discovery
+│   │   └── simple_color.py      # RGB preview plugin (depthai v3)
 │   ├── requirements.txt         # websockets, depthai, opencv-python, numpy
 │   └── web_static/
 │       ├── index.html
-│       ├── camera_visualizer.js  # MJPEG display + camera switch
+│       ├── camera_visualizer.js  # MJPEG display + camera switch + plugin UI
 │       └── style.css            # Dark theme
 │
 ├── 07_Recorder/
@@ -216,6 +219,9 @@ cd 06_Camera
 python camera_bridge.py --cam1-ip 10.95.76.11
 # Browser: http://localhost:8815 (control panel)
 # MJPEG:   http://localhost:8080 (direct video stream)
+
+# Use a specific plugin at startup:
+python camera_bridge.py --cam1-ip 10.95.76.11 --plugin simple_color
 ```
 
 ### 8. Run data recorder
@@ -263,11 +269,12 @@ python recorder_bridge.py
 - **Filter modes**: Moving Average (sliding window GPS) / Kalman (4D with IMU acceleration + odometry velocity)
 - **Features**: CSV waypoint upload, adaptive arrival tolerance (RTK quality-based), GPS timeout detection, coverage path generation (lawnmower pattern), Leaflet map UI
 
-### 06_Camera — OAK-D Camera MJPEG Streaming
+### 06_Camera — OAK-D Camera MJPEG Streaming (Pluggable)
 
-- **Data flow**: `OAK-D Camera → FrameSource → MJPEGServer (HTTP multipart) → Browser <img>`
-- **Components**: FrameSource (ABC), SimpleColorSource (depthai v3), MJPEGServer, CameraPipeline
-- **Features**: dual camera support (cam1/cam2 on separate MJPEG ports), camera switching, start/stop control, FPS tracking, WS status broadcast (1 Hz)
+- **Data flow**: `OAK-D Camera → FrameSource plugin → MJPEGServer (HTTP multipart) → Browser <img>`
+- **Components**: `plugins/` package (FrameSource ABC + registry + auto-discovery), SimpleColorSource (depthai v3), MJPEGServer, CameraPipeline
+- **Plugin system**: drop a `.py` file into `plugins/` with a `@register_plugin`-decorated `FrameSource` subclass — auto-discovered at startup, appears in the browser dropdown with its `config_schema()`. Zero changes needed in existing code.
+- **Features**: dual camera support (cam1/cam2 on separate MJPEG ports), camera switching, start/stop control, FPS tracking, WS status broadcast (1 Hz), runtime plugin switching with per-plugin config UI
 - **Note**: Video via HTTP MJPEG, WebSocket only for control/status
 
 ### 07_Recorder — Multi-Source Data Recorder

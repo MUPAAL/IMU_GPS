@@ -101,11 +101,14 @@ IMU_GPS/
 │       └── style.css            # 浅色主题
 │
 ├── 06_Camera/
-│   ├── camera_bridge.py         # OAK-D MJPEG 流 + WS 控制
+│   ├── camera_bridge.py         # OAK-D MJPEG 流 + 插件编排器
+│   ├── plugins/
+│   │   ├── __init__.py          # FrameSource ABC + 注册表 + 自动发现
+│   │   └── simple_color.py      # RGB 预览插件（depthai v3）
 │   ├── requirements.txt         # websockets, depthai, opencv-python, numpy
 │   └── web_static/
 │       ├── index.html
-│       ├── camera_visualizer.js  # MJPEG 显示 + 摄像头切换
+│       ├── camera_visualizer.js  # MJPEG 显示 + 摄像头切换 + 插件 UI
 │       └── style.css            # 暗色主题
 │
 ├── 07_Recorder/
@@ -216,6 +219,9 @@ cd 06_Camera
 python camera_bridge.py --cam1-ip 10.95.76.11
 # 浏览器：http://localhost:8815（控制面板）
 # MJPEG：http://localhost:8080（视频流）
+
+# 启动时指定插件：
+python camera_bridge.py --cam1-ip 10.95.76.11 --plugin simple_color
 ```
 
 ### 8. 运行数据录制器
@@ -263,11 +269,12 @@ python recorder_bridge.py
 - **滤波模式**：滑动平均（GPS 窗口均值）/ 卡尔曼（4D，含 IMU 加速度 + 里程计速度观测）
 - **功能**：CSV 航点上传、自适应到达容差（根据 RTK 质量调整）、GPS 超时检测、覆盖路径生成（割草机模式）、Leaflet 地图 UI
 
-### 06_Camera — OAK-D 摄像头 MJPEG 流
+### 06_Camera — OAK-D 摄像头 MJPEG 流（可插拔）
 
-- **数据流**：`OAK-D 摄像头 → FrameSource → MJPEGServer（HTTP multipart）→ 浏览器 <img>`
-- **组件**：FrameSource（ABC）、SimpleColorSource（depthai v3）、MJPEGServer、CameraPipeline
-- **功能**：双摄像头支持（cam1/cam2 独立 MJPEG 端口）、摄像头切换、启停控制、FPS 追踪、WS 状态广播（1 Hz）
+- **数据流**：`OAK-D 摄像头 → FrameSource 插件 → MJPEGServer（HTTP multipart）→ 浏览器 <img>`
+- **组件**：`plugins/` 包（FrameSource ABC + 注册表 + 自动发现）、SimpleColorSource（depthai v3）、MJPEGServer、CameraPipeline
+- **插件系统**：在 `plugins/` 目录下新建 `.py` 文件，写一个带 `@register_plugin` 装饰器的 `FrameSource` 子类即可——启动时自动发现，自动出现在浏览器下拉框中并带有 `config_schema()` 配置表单。零侵入，无需修改现有代码。
+- **功能**：双摄像头支持（cam1/cam2 独立 MJPEG 端口）、摄像头切换、启停控制、FPS 追踪、WS 状态广播（1 Hz）、运行时插件切换 + 每插件配置 UI
 - **注意**：视频走 HTTP MJPEG，WebSocket 仅用于控制/状态
 
 ### 07_Recorder — 多源数据录制器

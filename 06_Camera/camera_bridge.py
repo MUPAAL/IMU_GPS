@@ -18,7 +18,6 @@ Usage:
 
 from __future__ import annotations
 
-import abc
 import argparse
 import asyncio
 import http.server
@@ -28,19 +27,15 @@ import socketserver
 import threading
 import time
 import webbrowser
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
 
 import cv2
 import numpy as np
-
-try:
-    import depthai as dai
-except ImportError:
-    dai = None
-
 import websockets
+
+from plugins import FrameSource, get_plugin, list_plugins
 
 
 # ── Logger setup ─────────────────────────────────────────────────────────────
@@ -84,6 +79,10 @@ class CameraFrame:
     height: int = 0
     mjpeg_url_cam1: str = ""
     mjpeg_url_cam2: str = ""
+    # ── Plugin fields ──
+    active_plugin: str = ""
+    active_plugin_config: dict = field(default_factory=dict)
+    available_plugins: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Serialize to broadcast-ready dict."""
@@ -95,107 +94,15 @@ class CameraFrame:
             "height": self.height,
             "mjpeg_url_cam1": self.mjpeg_url_cam1,
             "mjpeg_url_cam2": self.mjpeg_url_cam2,
+            "active_plugin": self.active_plugin,
+            "active_plugin_config": self.active_plugin_config,
+            "available_plugins": self.available_plugins,
         }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # BLOCK 2 — PIPELINE
 # ═════════════════════════════════════════════════════════════════════════════
-
-class FrameSource(abc.ABC):
-    """Abstract base class for camera frame providers."""
-
-    @abc.abstractmethod
-    def open(self) -> None:
-        """Initialize camera resources."""
-
-    @abc.abstractmethod
-    def close(self) -> None:
-        """Release all camera resources."""
-
-    @abc.abstractmethod
-    def get_frame(self) -> np.ndarray | None:
-        """Return latest BGR frame or None."""
-
-
-class SimpleColorSource(FrameSource):
-    """
-    OAK-D single color camera source using depthai v3 API.
-
-    Captures color frames from an OAK-D PoE or USB device.
-    """
-
-    def __init__(
-        self, device_ip: str | None = None, fps: int = 30,
-        width: int = 1280, height: int = 720,
-    ) -> None:
-        self._device_ip = device_ip
-        self._fps = fps
-        self._width = width
-        self._height = height
-        self._device = None
-        self._pipeline = None
-        self._queue = None
-
-    def open(self) -> None:
-        """Create depthai pipeline and start the camera."""
-        if dai is None:
-            raise RuntimeError("depthai library not installed")
-
-        try:
-            if self._device_ip:
-                dev_info = dai.DeviceInfo(self._device_ip)
-                self._device = dai.Device(dev_info)
-            else:
-                self._device = dai.Device()
-
-            self._pipeline = dai.Pipeline(self._device)
-            cam = self._pipeline.create(dai.node.ColorCamera)
-            cam.setPreviewSize(self._width, self._height)
-            cam.setFps(self._fps)
-            cam.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
-            cam.setInterleaved(False)
-
-            self._queue = cam.preview.createOutputQueue(maxSize=1, blocking=False)
-            self._pipeline.start()
-            logger.info(
-                "SimpleColorSource: opened camera (ip=%s, %dx%d @ %d fps)",
-                self._device_ip, self._width, self._height, self._fps,
-            )
-        except Exception as exc:
-            logger.error("SimpleColorSource: failed to open camera: %s", exc)
-            self.close()
-            raise
-
-    def close(self) -> None:
-        """Release depthai resources."""
-        if self._pipeline is not None:
-            try:
-                self._pipeline.stop()
-            except Exception as exc:
-                logger.warning("SimpleColorSource: error stopping pipeline: %s", exc)
-            self._pipeline = None
-        if self._device is not None:
-            try:
-                self._device.close()
-            except Exception as exc:
-                logger.warning("SimpleColorSource: error closing device: %s", exc)
-            self._device = None
-        self._queue = None
-
-    def get_frame(self) -> np.ndarray | None:
-        """Non-blocking frame grab. Returns BGR numpy array or None."""
-        if self._queue is None:
-            return None
-        try:
-            in_frame = self._queue.tryGet()
-            if in_frame is not None:
-                return in_frame.getCvFrame()
-            return None
-        except Exception as exc:
-            logger.warning("SimpleColorSource: get_frame error: %s", exc)
-            return None
-
 
 class MJPEGServer:
     """
@@ -342,29 +249,23 @@ class CameraPipeline:
 
     Wraps one or two MJPEGServer instances and provides start/stop/switch
     control, plus a get_status() method for periodic broadcasts.
+    Supports dynamic plugin switching via the plugin registry.
     """
 
     def __init__(
         self,
-        cam1_ip: str | None,
-        cam2_ip: str | None,
-        cam1_port: int,
-        cam2_port: int,
-        fps: int,
-        width: int,
-        height: int,
+        stream_ports: dict[int, int],
         quality: int,
+        default_plugin: str = "simple_color",
+        default_config: dict | None = None,
+        cam_configs: dict[int, dict] | None = None,
     ) -> None:
-        self._cam1_ip = cam1_ip
-        self._cam2_ip = cam2_ip
-        self._cam1_port = cam1_port
-        self._cam2_port = cam2_port
-        self._fps = fps
-        self._width = width
-        self._height = height
+        self._stream_ports = stream_ports
         self._quality = quality
-
         self._cam_selection = 1
+        self._active_plugin_name = default_plugin
+        self._active_plugin_config = default_config or {}
+        self._cam_configs = cam_configs or {}
         self._servers: dict[int, MJPEGServer] = {}
         self._lock = threading.Lock()
 
@@ -378,16 +279,16 @@ class CameraPipeline:
         with self._lock:
             if cam_id in self._servers:
                 return  # already running
-            ip = self._cam1_ip if cam_id == 1 else self._cam2_ip
-            port = self._cam1_port if cam_id == 1 else self._cam2_port
-            source = SimpleColorSource(
-                device_ip=ip, fps=self._fps,
-                width=self._width, height=self._height,
-            )
+            plugin_cls = get_plugin(self._active_plugin_name)
+            # Merge per-cam base config with active plugin config
+            config = {**self._cam_configs.get(cam_id, {}), **self._active_plugin_config}
+            source = plugin_cls(**config)
+            port = self._stream_ports.get(cam_id, 8080)
             server = MJPEGServer(source, port, self._quality)
             server.start()
             self._servers[cam_id] = server
-            logger.info("CameraPipeline: started camera %d stream on port %d", cam_id, port)
+            logger.info("CameraPipeline: started camera %d stream on port %d (plugin=%s)",
+                        cam_id, port, self._active_plugin_name)
 
     def stop_stream(self, cam_id: int | None = None) -> None:
         """Stop the MJPEG stream for the given camera (or current selection)."""
@@ -406,6 +307,20 @@ class CameraPipeline:
         self._cam_selection = cam_id
         logger.info("CameraPipeline: switched to camera %d", cam_id)
 
+    def switch_plugin(self, plugin_name: str, config: dict | None = None) -> None:
+        """Stop current streams, switch plugin, restart previously active streams."""
+        with self._lock:
+            was_streaming = list(self._servers.keys())
+            for cid in was_streaming:
+                self._servers.pop(cid).stop()
+            self._active_plugin_name = plugin_name
+            if config is not None:
+                self._active_plugin_config = config
+        # Restart outside lock
+        for cid in was_streaming:
+            self.start_stream(cid)
+        logger.info("CameraPipeline: switched to plugin '%s'", plugin_name)
+
     def get_status(self) -> CameraFrame:
         """Return current status as a CameraFrame dataclass."""
         with self._lock:
@@ -413,14 +328,18 @@ class CameraPipeline:
             streaming = server.streaming if server else False
             fps = server.fps if server else 0.0
 
+        ports = self._stream_ports
         return CameraFrame(
             cam_selection=self._cam_selection,
             streaming=streaming,
             fps=fps,
-            width=self._width,
-            height=self._height,
-            mjpeg_url_cam1=f"http://{{host}}:{self._cam1_port}/",
-            mjpeg_url_cam2=f"http://{{host}}:{self._cam2_port}/",
+            width=self._active_plugin_config.get("width", 0),
+            height=self._active_plugin_config.get("height", 0),
+            mjpeg_url_cam1=f"http://{{host}}:{ports.get(1, 8080)}/",
+            mjpeg_url_cam2=f"http://{{host}}:{ports.get(2, 8081)}/",
+            active_plugin=self._active_plugin_name,
+            active_plugin_config=self._active_plugin_config,
+            available_plugins=list_plugins(),
         )
 
     def shutdown(self) -> None:
@@ -565,21 +484,26 @@ class CameraBridge:
         height: int,
         quality: int,
         static_dir: Path,
+        plugin: str = "simple_color",
     ) -> None:
         self._http_port = ws_port
         self._ws_port = ws_port + 1
         self._cam_selection = cam_selection
         self._static_dir = static_dir
 
+        # Build per-camera base configs (device_ip per cam)
+        cam_configs: dict[int, dict] = {}
+        if cam1_ip:
+            cam_configs[1] = {"device_ip": cam1_ip}
+        if cam2_ip:
+            cam_configs[2] = {"device_ip": cam2_ip}
+
         self._pipeline = CameraPipeline(
-            cam1_ip=cam1_ip,
-            cam2_ip=cam2_ip,
-            cam1_port=cam1_stream_port,
-            cam2_port=cam2_stream_port,
-            fps=fps,
-            width=width,
-            height=height,
+            stream_ports={1: cam1_stream_port, 2: cam2_stream_port},
             quality=quality,
+            default_plugin=plugin,
+            default_config={"fps": fps, "width": width, "height": height},
+            cam_configs=cam_configs,
         )
 
     def run(self) -> None:
@@ -650,6 +574,20 @@ class CameraBridge:
             cam_id = msg.get("cam_id", 1)
             self._pipeline.switch_camera(cam_id)
 
+        elif msg_type == "switch_plugin":
+            plugin_name = msg.get("plugin_name", "")
+            config = msg.get("config")
+            try:
+                self._pipeline.switch_plugin(plugin_name, config)
+            except KeyError as exc:
+                logger.warning("CameraBridge: switch_plugin failed: %s", exc)
+
+        elif msg_type == "update_plugin_config":
+            config = msg.get("config", {})
+            self._pipeline.switch_plugin(
+                self._pipeline._active_plugin_name, config,
+            )
+
         else:
             logger.debug("CameraBridge: unknown message type: %s", msg_type)
 
@@ -691,6 +629,10 @@ def _parse_args() -> argparse.Namespace:
         "--mjpeg-quality", type=int, default=80,
         help="JPEG encoding quality 1-100 (default: 80)",
     )
+    parser.add_argument(
+        "--plugin", default="simple_color",
+        help="Initial plugin name (default: simple_color)",
+    )
     return parser.parse_args()
 
 
@@ -708,4 +650,5 @@ if __name__ == "__main__":
         height=args.height,
         quality=args.mjpeg_quality,
         static_dir=Path(__file__).parent / "web_static",
+        plugin=args.plugin,
     ).run()

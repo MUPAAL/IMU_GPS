@@ -226,6 +226,75 @@ header h1 {
   text-decoration: underline;
 }
 
+/* ===== Plugin controls ===== */
+.control-select {
+  width: 100%;
+  padding: 7px 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-family: inherit;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+
+.control-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.config-field {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.config-field label {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  flex-shrink: 0;
+  margin-right: 8px;
+}
+
+.config-field input {
+  width: 120px;
+  padding: 4px 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  text-align: right;
+}
+
+.config-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.btn-accent {
+  width: 100%;
+  padding: 8px;
+  margin-top: 8px;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-accent:hover {
+  background: rgba(88, 166, 255, 0.12);
+}
+
 /* ===== Scrollbar ===== */
 #data-panel::-webkit-scrollbar { width: 4px; }
 #data-panel::-webkit-scrollbar-track { background: var(--bg-panel); }
