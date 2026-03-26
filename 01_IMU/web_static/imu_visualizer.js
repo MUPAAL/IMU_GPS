@@ -163,6 +163,9 @@ const targetQuat  = new THREE.Quaternion();
 // ========== Control state ==========
 let northOffsetDeg = 0;    // heading offset applied for true-north calibration (frontend sign: display = raw - offset)
 let rawHeadingDeg  = 0;    // latest raw (uncalibrated) heading from IMU
+let wsHeadingDeg   = null; // latest corrected heading from backend (source of truth)
+let wsHeadingDir   = null; // latest direction from backend (source of truth)
+let wsHeadingRaw   = null; // latest raw heading from backend
 let isPaused       = false; // whether to freeze live data updates
 let lockYawOnly    = false; // whether to show yaw only (strip pitch/roll)
 let topNorthView   = false; // top-down camera + north-up orientation
@@ -227,10 +230,10 @@ function drawCompass(deg) {
 
 // ========== Heading display ==========
 const COMPASS_DIRS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
-function updateHeadingDisplay(deg) {
+function updateHeadingDisplay(deg, dirOverride = null) {
   const idx = Math.round(deg / 22.5) % 16;
   setText('heading_deg', deg.toFixed(3) + '°');
-  setText('heading_dir', COMPASS_DIRS[idx]);
+  setText('heading_dir', dirOverride || COMPASS_DIRS[idx]);
 }
 
 function getNorthVector() {
@@ -304,8 +307,10 @@ function animate() {
   }
   // Raw heading: 0° = +X world axis, increases clockwise from above
   rawHeadingDeg = ((Math.atan2(chipXRaw.z, chipXRaw.x) * 180 / Math.PI) + 360) % 360;
-  const displayHeadingDeg = (rawHeadingDeg - northOffsetDeg + 360) % 360;
-  updateHeadingDisplay(displayHeadingDeg);
+  const displayHeadingDeg = (typeof wsHeadingDeg === 'number')
+    ? wsHeadingDeg
+    : (rawHeadingDeg - northOffsetDeg + 360) % 360;
+  updateHeadingDisplay(displayHeadingDeg, wsHeadingDir);
   drawCompass(displayHeadingDeg);
 
   if (topNorthView) {
@@ -441,6 +446,18 @@ function connect() {
       // Sync north offset from server (server is source of truth; convert sign convention)
       if (data.euler?.north_offset_deg !== undefined) {
         northOffsetDeg = (360 - data.euler.north_offset_deg) % 360;
+      }
+
+      // Sync heading from server (source of truth for display)
+      if (data.heading?.deg !== undefined) {
+        wsHeadingDeg = Number(data.heading.deg);
+      }
+      if (data.heading?.dir !== undefined) {
+        wsHeadingDir = String(data.heading.dir);
+      }
+      if (data.heading?.raw !== undefined) {
+        wsHeadingRaw = Number(data.heading.raw);
+        rawHeadingDeg = wsHeadingRaw;
       }
 
       // Update data panel

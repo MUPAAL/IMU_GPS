@@ -72,6 +72,9 @@ class IMUFrame:
     roll: float | None = None
     pitch: float | None = None
     yaw: float | None = None
+    heading_raw: float | None = None
+    heading: float | None = None
+    heading_dir: str | None = None
     hz: float | None = None
     north_offset_deg: float = 0.0              # north correction applied to yaw
     extra: dict = field(default_factory=dict)   # passthrough fields (cal, gyro, …)
@@ -90,6 +93,12 @@ class IMUFrame:
             }
         if self.hz is not None:
             payload["hz"] = self.hz
+        if self.heading is not None:
+            payload["heading"] = {
+                "raw": self.heading_raw,
+                "deg": self.heading,
+                "dir": self.heading_dir,
+            }
         payload.update(self.extra)
         return payload
 
@@ -162,6 +171,7 @@ class IMUPipeline:
         if frame is None:
             return None
         frame = self._enrich_euler(frame)
+        frame = self._enrich_heading(frame)
         frame = self._enrich_hz(frame)
         return self._serialize(frame)
 
@@ -288,8 +298,71 @@ class IMUPipeline:
         frame.hz = self._hz_tracker.tick()
         return frame
 
+    @staticmethod
+    def _heading_to_direction(heading_deg: float) -> str:
+        """Convert heading angle (0-360) to 16-point compass direction."""
+        dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+                "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+        idx = int(round((heading_deg % 360.0) / 22.5)) % 16
+        return dirs[idx]
+
+    @staticmethod
+    def _quat_mul(
+        a: tuple[float, float, float, float],
+        b: tuple[float, float, float, float],
+    ) -> tuple[float, float, float, float]:
+        """Quaternion multiply: a * b, components in (x, y, z, w)."""
+        ax, ay, az, aw = a
+        bx, by, bz, bw = b
+        return (
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+            aw * bw - ax * bx - ay * by - az * bz,
+        )
+
+    @staticmethod
+    def _normalize_quat(q: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+        x, y, z, w = q
+        norm = math.sqrt(x * x + y * y + z * z + w * w)
+        if norm <= 1e-9:
+            return (0.0, 0.0, 0.0, 1.0)
+        inv = 1.0 / norm
+        return (x * inv, y * inv, z * inv, w * inv)
+
+    def _enrich_heading(self, frame: IMUFrame) -> IMUFrame:
+        """Stage 3: compute web-aligned heading from quaternion + north offset."""
+        source = frame.extra.get("game_rot") or {
+            "qi": frame.qi,
+            "qj": frame.qj,
+            "qk": frame.qk,
+            "qr": frame.qr,
+        }
+
+        q_src = self._normalize_quat((
+            float(source.get("qi", 0.0)),
+            float(source.get("qj", 0.0)),
+            float(source.get("qk", 0.0)),
+            float(source.get("qr", 1.0)),
+        ))
+
+        # Same frame correction as frontend: BNO085 Z-up -> Three.js Y-up
+        frame_correction = (-math.sqrt(0.5), 0.0, 0.0, math.sqrt(0.5))
+        qx, qy, qz, qw = self._normalize_quat(self._quat_mul(frame_correction, q_src))
+
+        # Chip X-axis projected on horizontal plane (Three.js XZ)
+        chip_x_world_x = 1.0 - 2.0 * (qy * qy + qz * qz)
+        chip_x_world_z = 2.0 * (qx * qz - qw * qy)
+        raw_heading = (math.degrees(math.atan2(chip_x_world_z, chip_x_world_x)) + 360.0) % 360.0
+        corrected_heading = (raw_heading + self._north_offset_deg) % 360.0
+
+        frame.heading_raw = round(raw_heading, 3)
+        frame.heading = round(corrected_heading, 3)
+        frame.heading_dir = self._heading_to_direction(corrected_heading)
+        return frame
+
     def _serialize(self, frame: IMUFrame) -> str:
-        """Stage 4: convert IMUFrame to outbound JSON string."""
+        """Stage 5: convert IMUFrame to outbound JSON string."""
         return json.dumps(frame.to_dict())
 
 
@@ -591,7 +664,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--port",
-        default="/dev/cu.usbmodem1101",  # --- EDIT THIS DEFAULT FOR YOUR SYSTEM ---
+        default="/dev/cu.usbmodem101",  # --- EDIT THIS DEFAULT FOR YOUR SYSTEM ---
         help="Serial port device (default: /dev/ttyACM0)",
     )
     parser.add_argument(

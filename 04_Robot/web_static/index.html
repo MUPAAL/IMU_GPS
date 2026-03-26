@@ -38,46 +38,17 @@
 
   <!-- ── Top-left HUD: IMU + Compass ── -->
   <div id="hud-left">
-    <div class="hud-panel-title">ACCEL</div>
-    <div class="hud-value"><span class="hud-label">X</span><span class="hud-num" id="acc-x">--</span></div>
-    <div class="hud-value"><span class="hud-label">Y</span><span class="hud-num" id="acc-y">--</span></div>
-    <div class="hud-value"><span class="hud-label">Z</span><span class="hud-num" id="acc-z">--</span></div>
-    <div class="hud-panel-title" style="margin-top:5px;">GYRO</div>
-    <div class="hud-value"><span class="hud-label">X</span><span class="hud-num" id="gyro-x">--</span></div>
-    <div class="hud-value"><span class="hud-label">Y</span><span class="hud-num" id="gyro-y">--</span></div>
-    <div class="hud-value"><span class="hud-label">Z</span><span class="hud-num" id="gyro-z">--</span></div>
-    <div class="hud-panel-title" style="margin-top:5px;">COMPASS</div>
-    <div id="compass-svg-wrap">
-      <svg id="compass-svg" viewBox="0 0 100 100">
-        <!-- Outer ring -->
-        <circle cx="50" cy="50" r="46" fill="none" stroke="#1e2d3d" stroke-width="2"/>
-        <!-- Cardinal ticks -->
-        <g stroke="#5a7080" stroke-width="1.5">
-          <line x1="50" y1="6"  x2="50" y2="14"/>
-          <line x1="94" y1="50" x2="86" y2="50"/>
-          <line x1="50" y1="94" x2="50" y2="86"/>
-          <line x1="6"  y1="50" x2="14" y2="50"/>
-        </g>
-        <!-- Cardinal labels -->
-        <text x="50" y="22" text-anchor="middle" fill="#00d4ff" font-size="10" font-family="Courier New">N</text>
-        <text x="50" y="84" text-anchor="middle" fill="#5a7080" font-size="9"  font-family="Courier New">S</text>
-        <text x="82" y="54" text-anchor="middle" fill="#5a7080" font-size="9"  font-family="Courier New">E</text>
-        <text x="18" y="54" text-anchor="middle" fill="#5a7080" font-size="9"  font-family="Courier New">W</text>
-        <!-- Needle group (rotated by JS) -->
-        <g id="compass-needle" transform="rotate(0,50,50)">
-          <polygon points="50,16 46,50 54,50" fill="#ff4060"/>
-          <polygon points="50,84 46,50 54,50" fill="#1e2d3d"/>
-        </g>
-        <!-- Center dot -->
-        <circle cx="50" cy="50" r="3" fill="#00d4ff"/>
-      </svg>
-      <div id="compass-bearing">---°</div>
-      <div id="compass-cardinal">--</div>
-      <div id="compass-accuracy" class="acc-0">● UNCAL</div>
-    </div>
+    <div class="hud-panel-title">EULER</div>
+    <div class="hud-value"><span class="hud-label">ROLL</span><span class="hud-num" id="imu-roll">--</span></div>
+    <div class="hud-value"><span class="hud-label">PTCH</span><span class="hud-num" id="imu-pitch">--</span></div>
+    <div class="hud-value"><span class="hud-label">YAW</span><span class="hud-num" id="imu-yaw">--</span></div>
+    <div class="hud-panel-title" style="margin-top:5px;">HEADING</div>
+    <div class="hud-value"><span class="hud-label">HDG</span><span class="hud-num" id="nav-heading">--</span></div>
+    <div class="hud-value"><span class="hud-label">CARD</span><span class="hud-num" id="nav-cardinal">--</span></div>
     <div class="hud-panel-title" style="margin-top:5px;">ODOM</div>
     <div class="hud-value"><span class="hud-label">SPD</span><span class="hud-num" id="odom-v">--</span></div>
     <div class="hud-value"><span class="hud-label">ROT</span><span class="hud-num" id="odom-w">--</span></div>
+    <div class="hud-value"><span class="hud-label">STATE</span><span class="hud-num" id="odom-state">--</span></div>
     <div class="hud-value"><span class="hud-label">BAT</span><span class="hud-num" id="amiga-soc">--%</span></div>
   </div>
 

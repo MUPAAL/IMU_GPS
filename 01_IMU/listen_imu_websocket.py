@@ -20,8 +20,8 @@ async def listen_imu(ws_url: str):
         async with websockets.connect(ws_url) as websocket:
             print("✓ Connected!")
             print("\nReceiving IMU data...\n")
-            print("Roll (°) | Pitch (°) | Yaw (°)  | Hz   | Quaternion")
-            print("-" * 70)
+            print("Roll (°) | Pitch (°) | Yaw (°)  | Heading (°) | Direction | Hz   | Quaternion")
+            print("-" * 95)
             
             frame_count = 0
             async for message in websocket:
@@ -29,12 +29,15 @@ async def listen_imu(ws_url: str):
                     data = json.loads(message)
                     
                     euler = data.get("euler", {})
+                    heading_data = data.get("heading", {})
                     rot = data.get("rot", {})
                     hz = data.get("hz", 0)
                     
                     roll = euler.get("roll", 0)
                     pitch = euler.get("pitch", 0)
                     yaw = euler.get("yaw", 0)
+                    heading = heading_data.get("deg", yaw)
+                    direction = heading_data.get("dir", "N/A")
                     
                     qi = rot.get("qi", 0)
                     qj = rot.get("qj", 0)
@@ -42,7 +45,7 @@ async def listen_imu(ws_url: str):
                     qr = rot.get("qr", 1)
                     
                     print(
-                        f"{roll:7.2f} | {pitch:8.2f} | {yaw:8.2f} | "
+                        f"{roll:7.2f} | {pitch:8.2f} | {yaw:8.2f} | {heading:11.2f} | {direction:9s} | "
                         f"{hz:4.1f} | [{qi:6.3f}, {qj:6.3f}, {qk:6.3f}, {qr:6.3f}]"
                     )
                     
