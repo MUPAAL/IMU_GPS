@@ -1,19 +1,31 @@
 """
 camera_bridge.py — OAK-D camera MJPEG streaming bridge with WebSocket control.
 
+Architecture:
+    CameraDevice  — opens one depthai pipeline at startup, holds ALL camera
+                    nodes (RGB, Left, Right, StereoDepth).  Never restarted
+                    except from Advanced Settings (fps/resolution change).
+
+    MJPEGServer   — capture loop calls device.get_frames() then proc.process().
+                    Supports atomic processor swap (set_processor) with zero
+                    stream downtime.
+
+    CameraPipeline — owns one CameraDevice + one MJPEGServer per camera.
+                     Plugin switch = processor swap only.  Camera never
+                     restarted on plugin change.
+
 Data flow:
-    OAK-D Camera → FrameSource.get_frame() → MJPEGServer (HTTP multipart) → Browser <img>
-                                                    ↑
-    Browser → WebSocketServer → _handle_client_message → switch camera / toggle stream
-                                                    ↓
-              WebSocketServer.broadcast(1Hz) ← CameraPipeline.get_status() → Browser (status)
+    OAK-D → CameraDevice.get_frames() → proc.process(frames) → MJPEGServer
+    → HTTP multipart stream → Browser <img>
+
+    Browser → WebSocket → _handle_client_message → switch_plugin (instant)
+                                                  → restart_cameras (rare)
+    WebSocket ← 1 Hz broadcast ← CameraPipeline.get_status()
 
 Usage:
-    python camera_bridge.py --ws-port 8815 \
-        --cam1-ip 10.95.76.11 --cam2-ip 10.95.76.10 \
-        --cam1-stream-port 8080 --cam2-stream-port 8081
-    # Browser:     http://localhost:8815  (control panel)
-    # MJPEG:       http://localhost:8080  (camera 1 stream)
+    python camera_bridge.py --cam1-ip 10.95.76.11
+    # Browser:  http://localhost:8815
+    # MJPEG:    http://localhost:8080
 """
 
 from __future__ import annotations
@@ -24,7 +36,9 @@ import http.server
 import importlib
 import json
 import logging
+import os
 import socketserver
+import sys
 import threading
 import time
 import webbrowser
@@ -41,11 +55,13 @@ try:
 except ModuleNotFoundError:
     _plugins_mod = importlib.import_module(f"{__package__}.plugins")
 
-FrameSource   = _plugins_mod.FrameSource
-get_plugin    = _plugins_mod.get_plugin
-list_plugins  = _plugins_mod.list_plugins
 get_processor = _plugins_mod.get_processor
-is_processor  = _plugins_mod.is_processor
+list_plugins  = _plugins_mod.list_plugins
+
+try:
+    import depthai as dai
+except ImportError:
+    dai = None
 
 
 class _ThreadingTCPServer(socketserver.ThreadingTCPServer):
@@ -56,11 +72,8 @@ class _ThreadingTCPServer(socketserver.ThreadingTCPServer):
 # ── Logger setup ─────────────────────────────────────────────────────────────
 
 def _setup_logger() -> logging.Logger:
-    """Configure module-level logger; output to camera_bridge.log and stderr."""
     py_name = Path(__file__).stem
-    output_path = Path(__file__).parent
-    log_file = output_path / f"{py_name}.log"
-
+    log_file = Path(__file__).parent / f"{py_name}.log"
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -81,11 +94,7 @@ logger = _setup_logger()
 
 @dataclass
 class CameraFrame:
-    """
-    Status payload broadcast to the browser UI at 1 Hz.
-
-    Carries current camera selection, streaming state, and MJPEG endpoints.
-    """
+    """Status payload broadcast to the browser UI at 1 Hz."""
 
     cam_selection: int = 1
     streaming: bool = False
@@ -100,13 +109,12 @@ class CameraFrame:
     cam2_streaming: bool = False
     cam1_fps: float = 0.0
     cam2_fps: float = 0.0
-    # ── Plugin fields ──
     active_plugin: str = ""
     active_plugin_config: dict = field(default_factory=dict)
     available_plugins: list = field(default_factory=list)
+    available_streams: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        """Serialize to broadcast-ready dict."""
         return {
             "cam_selection": self.cam_selection,
             "streaming": self.streaming,
@@ -124,25 +132,173 @@ class CameraFrame:
             "active_plugin": self.active_plugin,
             "active_plugin_config": self.active_plugin_config,
             "available_plugins": self.available_plugins,
+            "available_streams": self.available_streams,
         }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# BLOCK 2 — PIPELINE
+# BLOCK 2 — CAMERA DEVICE
+# ═════════════════════════════════════════════════════════════════════════════
+
+# Camera socket constants (depthai v3)
+_RGB_SOCKET   = "CAM_A"
+_LEFT_SOCKET  = "CAM_B"
+_RIGHT_SOCKET = "CAM_C"
+
+
+class CameraDevice:
+    """
+    One depthai pipeline per physical OAK-D camera.
+
+    Opened once at startup.  Holds all camera nodes (RGB, Left, Right,
+    StereoDepth) so that plugins can access any stream without restarting.
+    Only close()/open() again when fps or resolution changes.
+    """
+
+    def __init__(
+        self,
+        device_ip: str | None,
+        fps: int,
+        width: int,
+        height: int,
+        enable_stereo: bool = False,
+    ) -> None:
+        self._device_ip = device_ip
+        self._fps = fps
+        self._width = width
+        self._height = height
+        self._enable_stereo = enable_stereo
+
+        self._device = None
+        self._pipeline = None
+        self._queues: dict[str, object] = {}
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    def open(self) -> None:
+        """Create depthai device, build pipeline with all nodes, start."""
+        if dai is None:
+            raise RuntimeError("depthai library not installed")
+
+        try:
+            if self._device_ip:
+                dev_info = dai.DeviceInfo(self._device_ip)
+                self._device = dai.Device(dev_info)
+            else:
+                self._device = dai.Device()
+
+            self._pipeline = dai.Pipeline(self._device)
+            self._queues = {}
+
+            # ── RGB camera ────────────────────────────────────────────────
+            cam_rgb = self._pipeline.create(dai.node.Camera).build(
+                boardSocket=getattr(dai.CameraBoardSocket, _RGB_SOCKET)
+            )
+            rgb_out = cam_rgb.requestOutput(
+                size=(self._width, self._height),
+                fps=float(self._fps),
+            )
+            self._queues["rgb"] = rgb_out.createOutputQueue(maxSize=1, blocking=False)
+
+            # ── Stereo cameras (optional) ─────────────────────────────────
+            if self._enable_stereo:
+                cam_left = self._pipeline.create(dai.node.Camera).build(
+                    boardSocket=getattr(dai.CameraBoardSocket, _LEFT_SOCKET)
+                )
+                cam_right = self._pipeline.create(dai.node.Camera).build(
+                    boardSocket=getattr(dai.CameraBoardSocket, _RIGHT_SOCKET)
+                )
+
+                stereo = self._pipeline.create(dai.node.StereoDepth)
+                stereo.setExtendedDisparity(True)
+
+                left_out = cam_left.requestOutput(size=(640, 400), fps=float(self._fps))
+                right_out = cam_right.requestOutput(size=(640, 400), fps=float(self._fps))
+                left_out.link(stereo.left)
+                right_out.link(stereo.right)
+
+                self._queues["depth"] = stereo.depth.createOutputQueue(maxSize=1, blocking=False)
+                self._queues["disparity"] = stereo.disparity.createOutputQueue(maxSize=1, blocking=False)
+
+            self._pipeline.start()
+            logger.info(
+                "CameraDevice opened: ip=%s %dx%d@%dfps stereo=%s streams=%s",
+                self._device_ip, self._width, self._height, self._fps,
+                self._enable_stereo, list(self._queues.keys()),
+            )
+        except Exception as exc:
+            logger.error("CameraDevice: failed to open: %s", exc)
+            self.close()
+            raise
+
+    def close(self) -> None:
+        """Stop pipeline and release device."""
+        self._queues = {}
+        if self._pipeline is not None:
+            try:
+                self._pipeline.stop()
+            except Exception as exc:
+                logger.warning("CameraDevice: error stopping pipeline: %s", exc)
+            self._pipeline = None
+        if self._device is not None:
+            try:
+                self._device.close()
+            except Exception as exc:
+                logger.warning("CameraDevice: error closing device: %s", exc)
+            self._device = None
+        logger.info("CameraDevice closed: ip=%s", self._device_ip)
+
+    # ── Frame access ──────────────────────────────────────────────────────────
+
+    def get_frames(self, stream_names: list[str]) -> dict[str, np.ndarray | None]:
+        """Non-blocking grab for requested streams. Returns dict of BGR arrays."""
+        result: dict[str, np.ndarray | None] = {}
+        for name in stream_names:
+            q = self._queues.get(name)
+            if q is None:
+                result[name] = None
+                continue
+            try:
+                pkt = q.tryGet()
+                if pkt is not None:
+                    frame = pkt.getCvFrame()
+                    # depth/disparity frames are single-channel; convert for display
+                    if name in ("depth", "disparity") and frame.ndim == 2:
+                        frame = cv2.applyColorMap(
+                            cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U),
+                            cv2.COLORMAP_JET,
+                        )
+                    result[name] = frame
+                else:
+                    result[name] = None
+            except Exception as exc:
+                logger.warning("CameraDevice: get_frames('%s') error: %s", name, exc)
+                result[name] = None
+        return result
+
+    def available_streams(self) -> list[str]:
+        return list(self._queues.keys())
+
+    @property
+    def is_open(self) -> bool:
+        return self._pipeline is not None
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# BLOCK 3 — MJPEG SERVER
 # ═════════════════════════════════════════════════════════════════════════════
 
 class MJPEGServer:
     """
-    HTTP MJPEG streaming server.
+    HTTP MJPEG streaming server backed by a CameraDevice.
 
-    Captures frames from a FrameSource in a background thread and serves
-    them as a multipart/x-mixed-replace HTTP stream.
+    The capture loop runs as long as _running is True.  Plugin switches
+    are zero-downtime: set_processor() atomically swaps the processor.
+    The HTTP server (start_http/stop_http) can be toggled independently.
     """
 
-    def __init__(
-        self, source: FrameSource, port: int, quality: int = 80,
-    ) -> None:
-        self._source = source
+    def __init__(self, device: CameraDevice, port: int, quality: int = 80) -> None:
+        self._device = device
         self._port = port
         self._quality = quality
         self._latest_jpeg: bytes = b""
@@ -154,7 +310,7 @@ class MJPEGServer:
         self._current_fps: float = 0.0
         self._client_count = 0
         self._client_lock = threading.Lock()
-        self._processor = None          # optional FrameProcessor
+        self._processor = None
         self._processor_lock = threading.Lock()
 
     @property
@@ -170,26 +326,19 @@ class MJPEGServer:
         with self._client_lock:
             return self._client_count
 
-    def start(self) -> bool:
-        """Open the frame source and start capture + HTTP server threads."""
+    def start_http(self) -> None:
+        """Start capture thread and HTTP streaming server."""
         if self._running:
-            return True
-
-        try:
-            self._source.open()
-        except Exception as exc:
-            logger.error("MJPEGServer: cannot open source: %s", exc)
-            return False
-
+            return
         self._running = True
 
-        # Capture thread
         self._capture_thread = threading.Thread(
-            target=self._capture_loop, daemon=True, name=f"mjpeg-capture-{self._port}",
+            target=self._capture_loop,
+            daemon=True,
+            name=f"mjpeg-capture-{self._port}",
         )
         self._capture_thread.start()
 
-        # HTTP server thread
         server_ref = self
         quality = self._quality
 
@@ -231,21 +380,37 @@ class MJPEGServer:
         def _run_http():
             try:
                 self._httpd = _ThreadingTCPServer(("", self._port), _StreamHandler)
-                logger.info("MJPEGServer: MJPEG stream on http://0.0.0.0:%d", self._port)
+                logger.info("MJPEGServer: stream on http://0.0.0.0:%d", self._port)
                 self._httpd.serve_forever()
             except Exception as exc:
-                logger.error("MJPEGServer: HTTP server error on port %d: %s", self._port, exc)
+                logger.error("MJPEGServer: HTTP error on port %d: %s", self._port, exc)
 
-        threading.Thread(target=_run_http, daemon=True, name=f"mjpeg-http-{self._port}").start()
-        return True
+        threading.Thread(
+            target=_run_http, daemon=True, name=f"mjpeg-http-{self._port}"
+        ).start()
+
+    def stop_http(self) -> None:
+        """Stop capture loop and HTTP server (does not close the camera device)."""
+        self._running = False
+        if self._httpd is not None:
+            try:
+                self._httpd.shutdown()
+                self._httpd.server_close()
+            except Exception as exc:
+                logger.warning("MJPEGServer: error shutting down HTTP: %s", exc)
+            self._httpd = None
+        self._latest_jpeg = b""
+        self._current_fps = 0.0
+        with self._client_lock:
+            self._client_count = 0
+        logger.info("MJPEGServer: stopped on port %d", self._port)
 
     def set_processor(self, processor) -> None:
-        """Swap the active FrameProcessor without restarting the stream."""
+        """Atomically swap the active FrameProcessor (zero downtime)."""
         with self._processor_lock:
             self._processor = processor
 
     def reconfigure_processor(self, **kwargs) -> None:
-        """Update processor config in-place when supported."""
         with self._processor_lock:
             proc = self._processor
         if proc is None:
@@ -255,51 +420,25 @@ class MJPEGServer:
         except Exception as exc:
             logger.warning("MJPEGServer: processor reconfigure error: %s", exc)
 
-    def reconfigure_source(self, **kwargs) -> None:
-        """Update source config in-place when supported."""
-        source = self._source
-        reconfigure = getattr(source, "reconfigure", None)
-        if reconfigure is None:
-            return
-        try:
-            reconfigure(**kwargs)
-        except Exception as exc:
-            logger.warning("MJPEGServer: source reconfigure error: %s", exc)
-
-    def stop(self) -> None:
-        """Stop capture and HTTP server, release frame source."""
-        self._running = False
-        if self._httpd is not None:
-            try:
-                self._httpd.shutdown()
-                self._httpd.server_close()
-            except Exception as exc:
-                logger.warning("MJPEGServer: error shutting down HTTP: %s", exc)
-            self._httpd = None
-        try:
-            self._source.close()
-        except Exception as exc:
-            logger.warning("MJPEGServer: error closing source: %s", exc)
-        self._latest_jpeg = b""
-        self._current_fps = 0.0
-        with self._client_lock:
-            self._client_count = 0
-        logger.info("MJPEGServer: stopped on port %d", self._port)
-
     def _capture_loop(self) -> None:
-        """Background thread: continuously grab frames and encode to JPEG."""
+        """Background thread: get frames from device, process, encode to JPEG."""
         while self._running:
-            frame = self._source.get_frame()
-            if frame is not None:
-                with self._processor_lock:
-                    proc = self._processor
-                if proc is not None:
-                    try:
-                        frame = proc.process(frame)
-                    except Exception as exc:
-                        logger.warning("MJPEGServer: processor error: %s", exc)
+            with self._processor_lock:
+                proc = self._processor
+            if proc is None:
+                time.sleep(0.01)
+                continue
+
+            frames = self._device.get_frames(proc.required_streams())
+            try:
+                output = proc.process(frames)
+            except Exception as exc:
+                logger.warning("MJPEGServer: processor error: %s", exc)
+                output = None
+
+            if output is not None:
                 ok, buf = cv2.imencode(
-                    ".jpg", frame,
+                    ".jpg", output,
                     [cv2.IMWRITE_JPEG_QUALITY, self._quality],
                 )
                 if ok:
@@ -310,7 +449,6 @@ class MJPEGServer:
                 time.sleep(0.005)
 
     def _tick_fps(self) -> None:
-        """Track capture frame rate with a rolling window."""
         now = time.monotonic()
         self._fps_tracker_times.append(now)
         if len(self._fps_tracker_times) > 60:
@@ -321,86 +459,82 @@ class MJPEGServer:
                 self._current_fps = (len(self._fps_tracker_times) - 1) / elapsed
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# BLOCK 4 — PIPELINE
+# ═════════════════════════════════════════════════════════════════════════════
+
 class CameraPipeline:
     """
-    Manages MJPEG server lifecycle and produces status snapshots.
+    Manages CameraDevice + MJPEGServer lifecycle and status snapshots.
 
-    Wraps one or two MJPEGServer instances and provides start/stop/switch
-    control, plus a get_status() method for periodic broadcasts.
-    Supports dynamic plugin switching via the plugin registry.
+    All camera resources are opened at __init__ time.  Plugin switching
+    is always instant (processor swap only).  Only restart_cameras() ever
+    closes and reopens the device — and only when called explicitly from
+    Advanced Settings.
     """
 
     def __init__(
         self,
+        cam_configs: dict[int, dict],
         stream_ports: dict[int, int],
         quality: int,
+        fps: int,
+        width: int,
+        height: int,
         default_plugin: str = "simple_color",
         default_config: dict | None = None,
-        cam_configs: dict[int, dict] | None = None,
+        enable_stereo: bool = False,
     ) -> None:
         self._stream_ports = stream_ports
         self._quality = quality
+        self._fps = fps
+        self._width = width
+        self._height = height
         self._cam_selection = 1
         self._active_plugin_name = default_plugin
         self._active_plugin_config = default_config or {}
-        self._cam_configs = cam_configs or {}
-        self._servers: dict[int, MJPEGServer] = {}
+        self._enable_stereo = enable_stereo
         self._lock = threading.Lock()
+
+        # Build devices and servers for each configured camera
+        self._devices: dict[int, CameraDevice] = {}
+        self._servers: dict[int, MJPEGServer] = {}
+        for cam_id, cfg in cam_configs.items():
+            dev = CameraDevice(
+                device_ip=cfg.get("device_ip"),
+                fps=fps,
+                width=width,
+                height=height,
+                enable_stereo=enable_stereo,
+            )
+            port = stream_ports.get(cam_id, 8080)
+            srv = MJPEGServer(dev, port, quality)
+            self._devices[cam_id] = dev
+            self._servers[cam_id] = srv
+
+        # Open all devices and start HTTP servers
+        self._open_all()
+
+    def _open_all(self) -> None:
+        """Open all camera devices and start MJPEG HTTP servers."""
+        proc_cls = get_processor(self._active_plugin_name)
+        processor = proc_cls(**self._active_plugin_config)
+
+        for cam_id, dev in self._devices.items():
+            try:
+                dev.open()
+            except Exception as exc:
+                logger.error("CameraPipeline: failed to open camera %d: %s", cam_id, exc)
+
+            srv = self._servers[cam_id]
+            srv.set_processor(processor)
+            srv.start_http()
 
     @property
     def cam_selection(self) -> int:
         return self._cam_selection
 
-    def start_stream(self, cam_id: int | None = None) -> None:
-        """Start the MJPEG stream for the given camera (or current selection)."""
-        cam_id = cam_id or self._cam_selection
-        with self._lock:
-            if cam_id in self._servers:
-                # Drop stale/non-running server handles so stream can recover.
-                if self._servers[cam_id].streaming:
-                    return  # already running
-                self._servers.pop(cam_id, None)
-            plugin_cls = get_plugin(self._active_plugin_name)
-            # Merge per-cam base config with active plugin config
-            config = {**self._cam_configs.get(cam_id, {}), **self._active_plugin_config}
-            port = self._stream_ports.get(cam_id, 8080)
-
-            # Retry once to avoid transient device release/start timing issues.
-            for attempt in (1, 2):
-                source = plugin_cls(**config)
-                server = MJPEGServer(source, port, self._quality)
-                started = server.start()
-                if started and server.streaming:
-                    self._servers[cam_id] = server
-                    logger.info(
-                        "CameraPipeline: started camera %d stream on port %d (plugin=%s)",
-                        cam_id, port, self._active_plugin_name,
-                    )
-                    return
-                logger.warning(
-                    "CameraPipeline: start camera %d failed on attempt %d/2",
-                    cam_id, attempt,
-                )
-                server.stop()
-                if attempt == 1:
-                    time.sleep(0.2)
-
-            logger.error(
-                "CameraPipeline: unable to start camera %d stream after retries",
-                cam_id,
-            )
-
-    def stop_stream(self, cam_id: int | None = None) -> None:
-        """Stop the MJPEG stream for the given camera (or current selection)."""
-        cam_id = cam_id or self._cam_selection
-        with self._lock:
-            server = self._servers.pop(cam_id, None)
-            if server:
-                server.stop()
-                logger.info("CameraPipeline: stopped camera %d stream", cam_id)
-
     def switch_camera(self, cam_id: int) -> None:
-        """Switch active camera selection."""
         if cam_id not in (1, 2):
             logger.warning("CameraPipeline: invalid cam_id=%d", cam_id)
             return
@@ -408,67 +542,89 @@ class CameraPipeline:
         logger.info("CameraPipeline: switched to camera %d", cam_id)
 
     def switch_plugin(self, plugin_name: str, config: dict | None = None) -> None:
-        """Switch active plugin or processor.
-
-        If plugin_name is a FrameProcessor, the camera stream keeps running and
-        only the image-processing step is swapped (instant, no restart).
-        If plugin_name is a FrameSource, the stream is restarted with the new source.
-        Switching back to a FrameSource also clears any active processor.
         """
-        if is_processor(plugin_name):
-            # ── Processor swap: camera keeps running ──────────────────────────
-            proc_cls = get_processor(plugin_name)
-            cfg = {**self._active_plugin_config, **(config or {})}
-            processor = proc_cls(**cfg)
-            with self._lock:
-                self._active_plugin_name = plugin_name
-                if config is not None:
-                    self._active_plugin_config = config
-                servers = list(self._servers.values())
-            for srv in servers:
-                srv.set_processor(processor)
-            logger.info(
-                "CameraPipeline: processor switched to '%s' (no restart)", plugin_name
-            )
-        else:
-            # ── Source swap: restart stream with new FrameSource ──────────────
-            # Validate first so we don't stop current streams for invalid input.
-            get_plugin(plugin_name)
-            with self._lock:
-                was_streaming = list(self._servers.keys())
-                for cid in was_streaming:
-                    # Clear processor before stopping so the old proc isn't
-                    # referenced after the camera device closes.
-                    self._servers[cid].set_processor(None)
-                    self._servers.pop(cid).stop()
-                self._active_plugin_name = plugin_name
-                if config is not None:
-                    self._active_plugin_config = config
-            for cid in was_streaming:
-                self.start_stream(cid)
-            logger.info(
-                "CameraPipeline: source switched to '%s' (stream restarted)", plugin_name
-            )
+        Swap the active processor across all running servers.
+
+        Always instant — no camera restart, no stream downtime.
+        """
+        proc_cls = get_processor(plugin_name)  # raises KeyError if unknown
+        # Use only the config provided for this plugin — do NOT carry over
+        # the previous plugin's config (different plugins have different keys).
+        new_config = config or {}
+        with self._lock:
+            self._active_plugin_name = plugin_name
+            self._active_plugin_config = new_config
+            servers = list(self._servers.values())
+
+        processor = proc_cls(**new_config)
+        for srv in servers:
+            srv.set_processor(processor)
+        logger.info(
+            "CameraPipeline: processor switched to '%s' (no restart)", plugin_name
+        )
 
     def update_plugin_config(self, config: dict) -> None:
-        """Update active plugin config, preferring in-place runtime reconfigure."""
+        """Update active plugin config in-place via reconfigure()."""
         if not isinstance(config, dict):
             return
         with self._lock:
-            merged = {**self._active_plugin_config, **config}
-            self._active_plugin_config = merged
-            active_name = self._active_plugin_name
+            self._active_plugin_config = {**self._active_plugin_config, **config}
             servers = list(self._servers.values())
-
-        if is_processor(active_name):
-            for srv in servers:
-                srv.reconfigure_processor(**merged)
-            logger.info("CameraPipeline: processor config updated in-place")
-            return
-
         for srv in servers:
-            srv.reconfigure_source(**merged)
-        logger.info("CameraPipeline: source config updated in-place")
+            srv.reconfigure_processor(**config)
+        logger.info("CameraPipeline: plugin config updated in-place")
+
+    def restart_cameras(self, fps: int, width: int, height: int) -> None:
+        """
+        Close all devices and reopen with new fps/resolution.
+
+        Only called from Advanced Settings.  Stream downtime expected.
+        """
+        logger.info(
+            "CameraPipeline: restarting cameras — %dx%d @ %d fps", width, height, fps
+        )
+        self._fps = fps
+        self._width = width
+        self._height = height
+
+        for cam_id, srv in self._servers.items():
+            srv.stop_http()
+
+        for cam_id, dev in self._devices.items():
+            dev._fps = fps
+            dev._width = width
+            dev._height = height
+            try:
+                dev.close()
+                dev.open()
+            except Exception as exc:
+                logger.error(
+                    "CameraPipeline: failed to restart camera %d: %s", cam_id, exc
+                )
+
+        proc_cls = get_processor(self._active_plugin_name)
+        processor = proc_cls(**self._active_plugin_config)
+        for srv in self._servers.values():
+            srv.set_processor(processor)
+            srv.start_http()
+
+        logger.info("CameraPipeline: all cameras restarted")
+
+    def start_http(self, cam_id: int | None = None) -> None:
+        """Start (or resume) HTTP streaming for a camera."""
+        cams = [cam_id] if cam_id is not None else list(self._servers.keys())
+        for cid in cams:
+            srv = self._servers.get(cid)
+            if srv and not srv.streaming:
+                srv.start_http()
+
+    def stop_http(self, cam_id: int | None = None) -> None:
+        """Stop HTTP streaming for a camera (device stays open)."""
+        cams = [cam_id] if cam_id is not None else list(self._servers.keys())
+        for cid in cams:
+            srv = self._servers.get(cid)
+            if srv and srv.streaming:
+                srv.stop_http()
 
     def get_status(self) -> CameraFrame:
         """Return current status as a CameraFrame dataclass."""
@@ -476,52 +632,51 @@ class CameraPipeline:
             server = self._servers.get(self._cam_selection)
             streaming = server.streaming if server else False
             fps = server.fps if server else 0.0
-            server_cam1 = self._servers.get(1)
-            server_cam2 = self._servers.get(2)
-            cam1_clients = server_cam1.client_count if server_cam1 else 0
-            cam2_clients = server_cam2.client_count if server_cam2 else 0
-            cam1_streaming = server_cam1.streaming if server_cam1 else False
-            cam2_streaming = server_cam2.streaming if server_cam2 else False
-            cam1_fps = server_cam1.fps if server_cam1 else 0.0
-            cam2_fps = server_cam2.fps if server_cam2 else 0.0
+            srv1 = self._servers.get(1)
+            srv2 = self._servers.get(2)
+            dev1 = self._devices.get(1)
 
         ports = self._stream_ports
         return CameraFrame(
             cam_selection=self._cam_selection,
             streaming=streaming,
             fps=fps,
-            width=self._active_plugin_config.get("width", self._active_plugin_config.get("rgb_width", 0)),
-            height=self._active_plugin_config.get("height", self._active_plugin_config.get("rgb_height", 0)),
+            width=self._width,
+            height=self._height,
             mjpeg_url_cam1=f"http://{{host}}:{ports.get(1, 8080)}/",
             mjpeg_url_cam2=f"http://{{host}}:{ports.get(2, 8081)}/",
-            cam1_clients=cam1_clients,
-            cam2_clients=cam2_clients,
-            cam1_streaming=cam1_streaming,
-            cam2_streaming=cam2_streaming,
-            cam1_fps=cam1_fps,
-            cam2_fps=cam2_fps,
+            cam1_clients=srv1.client_count if srv1 else 0,
+            cam2_clients=srv2.client_count if srv2 else 0,
+            cam1_streaming=srv1.streaming if srv1 else False,
+            cam2_streaming=srv2.streaming if srv2 else False,
+            cam1_fps=srv1.fps if srv1 else 0.0,
+            cam2_fps=srv2.fps if srv2 else 0.0,
             active_plugin=self._active_plugin_name,
             active_plugin_config=self._active_plugin_config,
             available_plugins=list_plugins(),
+            available_streams=dev1.available_streams() if dev1 else [],
         )
 
     def shutdown(self) -> None:
-        """Stop all running streams."""
-        for cam_id in list(self._servers.keys()):
-            self.stop_stream(cam_id)
+        """Stop all HTTP servers and close all camera devices."""
+        for srv in self._servers.values():
+            try:
+                srv.stop_http()
+            except Exception:
+                pass
+        for dev in self._devices.values():
+            try:
+                dev.close()
+            except Exception:
+                pass
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# BLOCK 3 — I/O ADAPTERS
+# BLOCK 5 — I/O ADAPTERS
 # ═════════════════════════════════════════════════════════════════════════════
 
 class WebSocketServer:
-    """
-    WebSocket server for browser clients.
-
-    Broadcasts CameraFrame status at 1 Hz and accepts control commands
-    (start_stream, stop_stream, switch_camera).
-    """
+    """WebSocket server: broadcasts CameraFrame status at 1 Hz, accepts commands."""
 
     def __init__(
         self,
@@ -535,7 +690,6 @@ class WebSocketServer:
         self._on_client_message = on_client_message
 
     async def broadcast_loop(self) -> None:
-        """Broadcast status to all clients at 1 Hz."""
         while True:
             if self._clients:
                 status = self._pipeline.get_status()
@@ -543,21 +697,16 @@ class WebSocketServer:
                 dead: set = set()
                 for ws in self._clients.copy():
                     try:
-                        # ── OUTPUT ─────────────────────────────────────────────────────────
-                        # Camera status JSON exits the program here to the browser.
-                        # If the browser receives wrong data, start debugging here.
                         await ws.send(message)
-                        # ───────────────────────────────────────────────────────────────────
                     except websockets.exceptions.ConnectionClosed:
                         dead.add(ws)
                     except Exception as exc:
-                        logger.warning("WebSocketServer: error sending to client: %s", exc)
+                        logger.warning("WebSocketServer: send error: %s", exc)
                         dead.add(ws)
                 self._clients.difference_update(dead)
             await asyncio.sleep(1.0)
 
     async def handle_client(self, websocket) -> None:
-        """Handle a single browser WebSocket connection lifecycle."""
         addr = websocket.remote_address
         logger.info("WebSocketServer: client connected: %s", addr)
         self._clients.add(websocket)
@@ -572,7 +721,7 @@ class WebSocketServer:
                             addr, exc,
                         )
         except websockets.exceptions.ConnectionClosed:
-            logger.debug("WebSocketServer: connection closed normally for %s", addr)
+            logger.debug("WebSocketServer: connection closed for %s", addr)
         except Exception as exc:
             logger.warning("WebSocketServer: handler error for %s: %s", addr, exc)
         finally:
@@ -580,27 +729,21 @@ class WebSocketServer:
             logger.info("WebSocketServer: client disconnected: %s", addr)
 
     async def serve(self) -> None:
-        """Start the WebSocket server and the broadcast coroutine."""
         logger.info("WebSocketServer: starting on ws://localhost:%d", self._port)
         asyncio.create_task(self.broadcast_loop())
         async with websockets.serve(self.handle_client, "0.0.0.0", self._port):
             logger.info("WebSocketServer: running.")
-            await asyncio.Future()  # run forever
+            await asyncio.Future()
 
 
 class HttpFileServer:
-    """
-    Serve static files from web_static/ over HTTP.
-
-    Runs in a dedicated daemon thread.
-    """
+    """Serve static files from web_static/ over HTTP."""
 
     def __init__(self, static_dir: Path, port: int) -> None:
         self._static_dir = static_dir
         self._port = port
 
     def run(self) -> None:
-        """Entry point for the HTTP server thread."""
         static_dir = self._static_dir
 
         class _Handler(SimpleHTTPRequestHandler):
@@ -618,19 +761,22 @@ class HttpFileServer:
                 )
                 httpd.serve_forever()
         except Exception as exc:
-            logger.error("HttpFileServer: failed to start on port %d: %s", self._port, exc)
+            logger.error(
+                "HttpFileServer: failed on port %d: %s", self._port, exc
+            )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# BLOCK 4 — APPLICATION
+# BLOCK 6 — APPLICATION
 # ═════════════════════════════════════════════════════════════════════════════
 
 class CameraBridge:
     """
-    Top-level orchestrator.  Assembles and starts all components:
-      1. CameraPipeline   — manages MJPEG servers + camera lifecycle
-      2. HttpFileServer    — serves web_static/ on HTTP port
-      3. WebSocketServer   — control/status WS on HTTP port + 1
+    Top-level orchestrator.
+
+    1. CameraPipeline   — opens all camera devices at startup
+    2. HttpFileServer    — serves web_static/
+    3. WebSocketServer   — control/status WS
     """
 
     def __init__(
@@ -647,13 +793,15 @@ class CameraBridge:
         quality: int,
         static_dir: Path,
         plugin: str = "simple_color",
+        enable_stereo: bool = False,
     ) -> None:
         self._http_port = ws_port
         self._ws_port = ws_port + 1
         self._cam_selection = cam_selection
         self._static_dir = static_dir
+        # Store original argv for process-restart (Advanced Settings)
+        self._original_argv = sys.argv[:]
 
-        # Build per-camera base configs (device_ip per cam)
         cam_configs: dict[int, dict] = {}
         if cam1_ip:
             cam_configs[1] = {"device_ip": cam1_ip}
@@ -661,21 +809,23 @@ class CameraBridge:
             cam_configs[2] = {"device_ip": cam2_ip}
 
         self._pipeline = CameraPipeline(
+            cam_configs=cam_configs,
             stream_ports={1: cam1_stream_port, 2: cam2_stream_port},
             quality=quality,
+            fps=fps,
+            width=width,
+            height=height,
             default_plugin=plugin,
-            default_config={"fps": fps, "width": width, "height": height},
-            cam_configs=cam_configs,
+            default_config={},
+            enable_stereo=enable_stereo,
         )
 
     def run(self) -> None:
-        """Synchronous entry point — blocks until Ctrl-C."""
         logger.info(
             "CameraBridge starting | http=:%d ws=:%d",
             self._http_port, self._ws_port,
         )
 
-        # HTTP file server
         if self._static_dir.exists():
             http_server = HttpFileServer(self._static_dir, self._http_port)
             threading.Thread(
@@ -687,9 +837,7 @@ class CameraBridge:
                 self._static_dir,
             )
 
-        # Auto-start selected camera stream
         self._pipeline.switch_camera(self._cam_selection)
-        self._pipeline.start_stream(self._cam_selection)
 
         url = f"http://localhost:{self._http_port}"
         logger.info("Open browser at %s", url)
@@ -703,7 +851,6 @@ class CameraBridge:
             self._pipeline.shutdown()
 
     async def _run_async(self) -> None:
-        """Start all async components."""
         ws_server = WebSocketServer(
             port=self._ws_port,
             pipeline=self._pipeline,
@@ -712,25 +859,23 @@ class CameraBridge:
         await ws_server.serve()
 
     def _handle_client_message(self, raw: str) -> None:
-        """Parse and dispatch JSON control messages from the browser."""
         try:
             msg = json.loads(raw)
         except json.JSONDecodeError as exc:
             logger.warning(
-                "CameraBridge: invalid JSON from browser: %s | raw: %s",
-                exc, raw[:120],
+                "CameraBridge: invalid JSON: %s | raw: %s", exc, raw[:120]
             )
             return
 
         msg_type = msg.get("type", "")
 
         if msg_type == "start_stream":
-            cam_id = msg.get("cam_id", self._pipeline.cam_selection)
-            self._pipeline.start_stream(cam_id)
+            cam_id = msg.get("cam_id")
+            self._pipeline.start_http(cam_id)
 
         elif msg_type == "stop_stream":
-            cam_id = msg.get("cam_id", self._pipeline.cam_selection)
-            self._pipeline.stop_stream(cam_id)
+            cam_id = msg.get("cam_id")
+            self._pipeline.stop_http(cam_id)
 
         elif msg_type == "switch_camera":
             cam_id = msg.get("cam_id", 1)
@@ -738,7 +883,7 @@ class CameraBridge:
 
         elif msg_type == "switch_plugin":
             plugin_name = msg.get("plugin_name", "")
-            config = msg.get("config")
+            config = msg.get("config") or {}
             try:
                 self._pipeline.switch_plugin(plugin_name, config)
             except KeyError as exc:
@@ -748,8 +893,54 @@ class CameraBridge:
             config = msg.get("config", {})
             self._pipeline.update_plugin_config(config)
 
+        elif msg_type == "restart_camera":
+            fps    = int(msg.get("fps", 30))
+            width  = int(msg.get("width", 1280))
+            height = int(msg.get("height", 720))
+            # depthai does not support closing/reopening a device in the same
+            # process.  Re-exec the whole process with updated fps/width/height.
+            threading.Thread(
+                target=self._restart_process,
+                args=(fps, width, height),
+                daemon=True,
+                name="camera-restart",
+            ).start()
+
         else:
             logger.debug("CameraBridge: unknown message type: %s", msg_type)
+
+    def _restart_process(self, fps: int, width: int, height: int) -> None:
+        """
+        Re-exec the current Python process with updated fps/width/height args.
+
+        depthai does not support closing and reopening a device within the
+        same process, so the only reliable way to change resolution or FPS
+        is to restart the entire process via os.execv.
+        """
+        logger.info(
+            "CameraBridge: restarting process — %dx%d @ %d fps", width, height, fps
+        )
+        # Build new argv: start from original, patch --fps/--width/--height
+        argv = self._original_argv[:]
+
+        def _replace_or_append(args: list[str], flag: str, value: str) -> None:
+            for i, arg in enumerate(args):
+                if arg == flag and i + 1 < len(args):
+                    args[i + 1] = value
+                    return
+                if arg.startswith(f"{flag}="):
+                    args[i] = f"{flag}={value}"
+                    return
+            args.extend([flag, value])
+
+        _replace_or_append(argv, "--fps",    str(fps))
+        _replace_or_append(argv, "--width",  str(width))
+        _replace_or_append(argv, "--height", str(height))
+
+        self._pipeline.shutdown()
+        time.sleep(0.5)  # let depthai release resources before exec
+        # argv[0] is the script path; keep it so Python knows what to run
+        os.execv(sys.executable, [sys.executable] + argv)
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
@@ -764,11 +955,11 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--cam1-ip", default="10.95.76.11",
-        help="OAK-D camera 1 IP address (default: None = USB auto-detect)",
+        help="OAK-D camera 1 IP address",
     )
     parser.add_argument(
         "--cam2-ip", default="10.95.76.10",
-        help="OAK-D camera 2 IP address (default: None)",
+        help="OAK-D camera 2 IP address (default: 10.95.76.10)",
     )
     parser.add_argument(
         "--cam-selection", type=int, default=1, choices=[1, 2],
@@ -793,6 +984,10 @@ def _parse_args() -> argparse.Namespace:
         "--plugin", default="simple_color",
         help="Initial plugin name (default: simple_color)",
     )
+    parser.add_argument(
+        "--stereo", default=True,
+        help="Enable stereo depth nodes (Left/Right/StereoDepth)",
+    )
     return parser.parse_args()
 
 
@@ -811,4 +1006,5 @@ if __name__ == "__main__":
         quality=args.mjpeg_quality,
         static_dir=Path(__file__).parent / "web_static",
         plugin=args.plugin,
+        enable_stereo=args.stereo,
     ).run()

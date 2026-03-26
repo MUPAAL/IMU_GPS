@@ -122,6 +122,26 @@
         </div>
       </div>
 
+      <!-- Advanced Settings -->
+      <div class="panel-section">
+        <details id="advancedSettings">
+          <summary>Advanced Settings (camera restart)</summary>
+          <div class="config-field">
+            <label for="settingsFps">FPS</label>
+            <input type="number" id="settingsFps" value="30" min="1" max="60" />
+          </div>
+          <div class="config-field">
+            <label for="settingsWidth">Width</label>
+            <input type="number" id="settingsWidth" value="1280" min="320" max="3840" />
+          </div>
+          <div class="config-field">
+            <label for="settingsHeight">Height</label>
+            <input type="number" id="settingsHeight" value="720" min="240" max="2160" />
+          </div>
+          <button class="btn btn-danger" id="btnRestartCamera">Restart Camera</button>
+        </details>
+      </div>
+
     </div>
 
   </div>

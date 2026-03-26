@@ -39,6 +39,10 @@ const pluginSelect       = document.getElementById("pluginSelect");
 const activePlugin       = document.getElementById("activePlugin");
 const pluginConfigContainer = document.getElementById("pluginConfigContainer");
 const btnApplyPlugin     = document.getElementById("btnApplyPlugin");
+const btnRestartCamera   = document.getElementById("btnRestartCamera");
+const settingsFps        = document.getElementById("settingsFps");
+const settingsWidth      = document.getElementById("settingsWidth");
+const settingsHeight     = document.getElementById("settingsHeight");
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
 
@@ -53,9 +57,8 @@ let lastActivePlugin = "";
 let lastPluginList = [];
 let pendingPluginSelection = null;
 let waitingForFirstFrame = false;
-let forceStreamReload = false;
 let viewMode = "single"; // single | both
-let applyingPlugin = false; // plugin apply feedback flag
+let applyingPlugin = false;
 let pluginApplyTimer = null;
 let activePluginName = "";
 let liveUpdateTimer = null;
@@ -67,7 +70,6 @@ function showOverlay(text, loading = false) {
 }
 
 function hideOverlay() {
-  // Don't hide immediately if applying plugin; wait for real feedback
   if (applyingPlugin) return;
   videoOverlay.classList.add("hidden");
   overlaySpinner.classList.remove("active");
@@ -156,7 +158,7 @@ function updateUI(data) {
   streamRes.textContent = data.width && data.height
     ? `${data.width}x${data.height}` : "—";
 
-  // MJPEG URLs — replace {host} with actual hostname
+  // MJPEG URLs
   const host = window.location.hostname;
   const url1 = data.mjpeg_url_cam1.replace("{host}", host);
   const url2 = data.mjpeg_url_cam2.replace("{host}", host);
@@ -174,19 +176,21 @@ function updateUI(data) {
   }
   if (data.available_plugins) {
     updatePluginSelect(data.available_plugins, data.active_plugin);
-    // Render config for the user's current dropdown selection, not the server's active plugin.
-    // When the server confirms the switch, lastActivePlugin updates and the dropdown syncs,
-    // at which point pluginSelect.value === data.active_plugin naturally.
     const selectedPlugin = pluginSelect.value || data.active_plugin;
     const selectedConfig = selectedPlugin === data.active_plugin ? data.active_plugin_config : {};
     renderPluginConfig(data.available_plugins, selectedPlugin, selectedConfig);
   }
 
+  // When server confirms restart finished (streaming resumed after restart)
+  if (applyingPlugin && isStreaming) {
+    finishApply();
+    hideOverlay();
+  }
+
   if (viewMode === "single") {
     const streamUrl = currentCam === 1 ? url1 : url2;
     if (isStreaming) {
-      const shouldReload = forceStreamReload || !mjpegStream.src.includes(streamUrl);
-      if (shouldReload) {
+      if (!mjpegStream.src.includes(streamUrl)) {
         waitingForFirstFrame = true;
         showOverlay("Starting camera…", true);
         const reloadUrl = `${streamUrl}${streamUrl.includes("?") ? "&" : "?"}reload=${Date.now()}`;
@@ -201,15 +205,12 @@ function updateUI(data) {
       showOverlay("Stream not active", false);
     }
   } else {
-    const reloadSuffix = forceStreamReload ? `${Date.now()}` : null;
-    renderDualCamera(1, url1, cam1Streaming, reloadSuffix);
-    renderDualCamera(2, url2, cam2Streaming, reloadSuffix);
+    renderDualCamera(1, url1, cam1Streaming);
+    renderDualCamera(2, url2, cam2Streaming);
   }
-
-  forceStreamReload = false;
 }
 
-function renderDualCamera(camId, streamUrl, isStreaming, reloadSuffix = null) {
+function renderDualCamera(camId, streamUrl, isStreaming) {
   const img = camId === 1 ? mjpegStreamCam1 : mjpegStreamCam2;
   if (!img) return;
 
@@ -220,15 +221,10 @@ function renderDualCamera(camId, streamUrl, isStreaming, reloadSuffix = null) {
     return;
   }
 
-  const shouldReload = !!reloadSuffix || !img.src.includes(streamUrl);
-  if (shouldReload) {
-    const reloadUrl = reloadSuffix
-      ? `${streamUrl}${streamUrl.includes("?") ? "&" : "?"}reload=${reloadSuffix}`
-      : streamUrl;
-    img.src = reloadUrl;
+  if (!img.src.includes(streamUrl)) {
+    img.src = streamUrl;
     showDualOverlay(camId, `Camera ${camId} loading…`);
   }
-
   img.classList.add("active");
 }
 
@@ -288,16 +284,7 @@ btnViewBoth.addEventListener("click", () => {
 
 mjpegStream.addEventListener("load", () => {
   waitingForFirstFrame = false;
-  if (applyingPlugin) {
-    finishApply();
-    videoOverlayText.textContent = "Plugin applied ✓";
-    overlaySpinner.classList.remove("active");
-    pluginApplyTimer = setTimeout(() => {
-      videoOverlay.classList.add("hidden");
-    }, 800);
-  } else {
-    hideOverlay();
-  }
+  hideOverlay();
 });
 
 mjpegStream.addEventListener("error", () => {
@@ -306,20 +293,8 @@ mjpegStream.addEventListener("error", () => {
   showOverlay("Waiting for camera…", true);
 });
 
-mjpegStreamCam1.addEventListener("load", () => {
-  if (applyingPlugin) {
-    showDualOverlay(1, "Applied ✓");
-  } else {
-    hideDualOverlay(1);
-  }
-});
-mjpegStreamCam2.addEventListener("load", () => {
-  if (applyingPlugin) {
-    showDualOverlay(2, "Applied ✓");
-  } else {
-    hideDualOverlay(2);
-  }
-});
+mjpegStreamCam1.addEventListener("load", () => { hideDualOverlay(1); });
+mjpegStreamCam2.addEventListener("load", () => { hideDualOverlay(2); });
 mjpegStreamCam1.addEventListener("error", () => {
   if (!mjpegStreamCam1.src) return;
   showDualOverlay(1, "Camera 1 waiting…");
@@ -332,10 +307,6 @@ mjpegStreamCam2.addEventListener("error", () => {
 // ── Plugin Controls ─────────────────────────────────────────────────────────
 
 function updatePluginSelect(plugins, activeName) {
-  // Rebuild the processor name set so isProcessorPlugin() stays accurate.
-  processorNames.clear();
-  plugins.forEach(p => { if (p.is_processor) processorNames.add(p.name); });
-
   const previousSelection = pluginSelect.value;
   const hash = plugins.map(p => p.name).join(",");
   const listChanged = hash !== lastPluginListHash;
@@ -352,7 +323,6 @@ function updatePluginSelect(plugins, activeName) {
       pluginSelect.appendChild(opt);
     });
 
-    // Keep user selection when possible; otherwise fall back to server active plugin.
     const preferredSelection =
       (hasPlugin(pendingPluginSelection) && pendingPluginSelection) ||
       (hasPlugin(previousSelection) && previousSelection) ||
@@ -360,10 +330,7 @@ function updatePluginSelect(plugins, activeName) {
     pluginSelect.value = preferredSelection;
     lastActivePlugin = activeName || "";
   } else if (activeName !== lastActivePlugin) {
-    // Server confirmed a different plugin became active — sync the dropdown
     lastActivePlugin = activeName || "";
-
-    // Do not override a user selection that is pending apply.
     if (!pendingPluginSelection || pendingPluginSelection === lastActivePlugin) {
       pluginSelect.value = lastActivePlugin;
       pendingPluginSelection = null;
@@ -373,8 +340,6 @@ function updatePluginSelect(plugins, activeName) {
   if (pendingPluginSelection && pendingPluginSelection === lastActivePlugin) {
     pendingPluginSelection = null;
   }
-
-  // Otherwise: user may have changed the dropdown; don't overwrite their selection
 }
 
 function renderPluginConfig(plugins, activeName, currentConfig) {
@@ -493,14 +458,6 @@ function renderPluginConfig(plugins, activeName, currentConfig) {
   });
 }
 
-// Track which plugins are processors (instant switch) vs sources (stream restart).
-// Populated when the server sends available_plugins with is_processor field.
-const processorNames = new Set();
-
-function isProcessorPlugin(name) {
-  return processorNames.has(name);
-}
-
 function setApplyLoading(loading, label = "Applying…") {
   btnApplyPlugin.disabled = loading;
   btnApplyPlugin.textContent = loading ? label : "Apply Plugin";
@@ -520,57 +477,61 @@ btnApplyPlugin.addEventListener("click", () => {
   pluginConfigContainer.querySelectorAll('input[type="checkbox"]').forEach(input => {
     config[input.name] = input.checked;
   });
-
   pluginConfigContainer.querySelectorAll('input[type="radio"]:checked').forEach(input => {
     config[input.name] = input.value;
   });
-
   pluginConfigContainer.querySelectorAll('input[type="number"], input[type="text"], input[type="range"]').forEach(input => {
     const val = input.value.trim();
     if (val === "") return;
     config[input.name] = input.type === "number" || input.type === "range"
-      ? parseInt(val, 10)
-      : val;
+      ? parseInt(val, 10) : val;
   });
 
   clearTimeout(pluginApplyTimer);
   applyingPlugin = true;
   pluginConfigContainer.dataset.plugin = "";
 
-  if (isProcessorPlugin(pluginName)) {
-    // ── Processor: instant switch, no stream restart ──────────────────────
-    setApplyLoading(true, "Applying…");
-    send({ type: "switch_plugin", plugin_name: pluginName, config: config });
-    // Re-enable button once server confirms (or after short timeout)
-    pluginApplyTimer = setTimeout(finishApply, 1000);
-  } else {
-    // ── Source: stream will restart, show overlay while waiting ──────────
-    setApplyLoading(true, "Restarting…");
-    showOverlay("Switching camera source…", true);
-    forceStreamReload = true;
-    send({ type: "switch_plugin", plugin_name: pluginName, config: config });
-    // Fallback: give up waiting after 8s
-    pluginApplyTimer = setTimeout(() => {
-      if (applyingPlugin) {
-        finishApply();
-        videoOverlayText.textContent = "Plugin applied ✓";
-        overlaySpinner.classList.remove("active");
-        pluginApplyTimer = setTimeout(() => {
-          videoOverlay.classList.add("hidden");
-        }, 1000);
-      }
-    }, 8000);
-  }
+  // All plugins are processors — always instant, no stream restart
+  setApplyLoading(true, "Applying…");
+  send({ type: "switch_plugin", plugin_name: pluginName, config: config });
+  pluginApplyTimer = setTimeout(finishApply, 1000);
 });
 
 pluginSelect.addEventListener("change", () => {
   const selectedName = pluginSelect.value;
   pendingPluginSelection = selectedName;
   if (lastPluginList.length > 0) {
-    pluginConfigContainer.dataset.plugin = "";  // force re-render
+    pluginConfigContainer.dataset.plugin = "";
     renderPluginConfig(lastPluginList, selectedName, {});
   }
 });
+
+// ── Advanced Settings ─────────────────────────────────────────────────────────
+
+if (btnRestartCamera) {
+  btnRestartCamera.addEventListener("click", () => {
+    const fps    = parseInt(settingsFps.value, 10) || 30;
+    const width  = parseInt(settingsWidth.value, 10) || 1280;
+    const height = parseInt(settingsHeight.value, 10) || 720;
+
+    if (!confirm(`Restart camera with ${width}x${height} @ ${fps}fps?\nThe stream will be interrupted briefly.`)) {
+      return;
+    }
+
+    applyingPlugin = true;
+    showOverlay("Restarting camera…", true);
+    btnRestartCamera.disabled = true;
+    btnRestartCamera.textContent = "Restarting…";
+
+    send({ type: "restart_camera", fps, width, height });
+
+    // Re-enable button after timeout (server broadcasts new status when done)
+    setTimeout(() => {
+      btnRestartCamera.disabled = false;
+      btnRestartCamera.textContent = "Restart Camera";
+    }, 8000);
+  });
+}
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 applyViewMode();
