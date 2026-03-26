@@ -591,7 +591,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--port",
-        default="/dev/ttyACM0",
+        default="/dev/cu.usbmodem1101",  # --- EDIT THIS DEFAULT FOR YOUR SYSTEM ---
         help="Serial port device (default: /dev/ttyACM0)",
     )
     parser.add_argument(

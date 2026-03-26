@@ -634,7 +634,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="RTK serial-to-WebSocket bridge")
     parser.add_argument(
         "--port",
-        default="/tmp/rtk_in",
+        default="/dev/cu.usbmodem1203",
         help="Serial port for RTK receiver (default: /dev/ttyACM1)",
     )
     parser.add_argument(

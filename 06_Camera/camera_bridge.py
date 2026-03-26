@@ -603,11 +603,11 @@ def _parse_args() -> argparse.Namespace:
         help="HTTP port for web UI; WebSocket uses ws-port+1 (default: 8815)",
     )
     parser.add_argument(
-        "--cam1-ip", default=None,
+        "--cam1-ip", default="10.95.76.11",
         help="OAK-D camera 1 IP address (default: None = USB auto-detect)",
     )
     parser.add_argument(
-        "--cam2-ip", default=None,
+        "--cam2-ip", default="10.95.76.10",
         help="OAK-D camera 2 IP address (default: None)",
     )
     parser.add_argument(
