@@ -107,7 +107,8 @@ class NavController:
     Navigation state machine: manages waypoints, heading computation, and
     target-reaching logic.
 
-    Waypoints are loaded from the browser; heading_deg is derived from IMU yaw.
+    Waypoints are loaded from the browser; heading is consumed from IMU payload
+    (precomputed in imu_bridge) to keep all clients consistent.
     """
 
     REACH_TOLERANCE_M = 0.5  # default distance threshold
@@ -156,16 +157,23 @@ class NavController:
         NavPayload assembly and broadcast to the browser (OUTPUT).
 
         Steps:
-          1. Derive heading_deg from IMU euler yaw: (90 - yaw) % 360
+          1. Read heading from IMU payload (imu.heading.deg/dir) when available
           2. If navigating, find current target and check reach distance
           3. Return nav dict
         """
-        # Heading from IMU euler
-        euler = imu.get("euler", {})
-        yaw = euler.get("yaw")
+        # Heading from IMU payload (source of truth from imu_bridge)
+        heading = imu.get("heading", {})
         heading_deg = None
-        if yaw is not None:
-            heading_deg = round((90 - yaw) % 360, 2)
+        heading_dir = None
+        if heading.get("deg") is not None:
+            heading_deg = float(heading.get("deg"))
+            heading_dir = heading.get("dir")
+        else:
+            # Fallback for older imu payloads without heading field
+            euler = imu.get("euler", {})
+            yaw = euler.get("yaw")
+            if yaw is not None:
+                heading_deg = round((90 - yaw) % 360, 2)
 
         # Target logic
         current_target = None
@@ -194,6 +202,7 @@ class NavController:
 
         return {
             "heading_deg": heading_deg,
+            "heading_dir": heading_dir,
             "state": self._state,
             "current_target": current_target,
             "target_distance_m": target_distance_m,
@@ -436,8 +445,8 @@ class HttpFileServer:
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, directory=str(static_dir), **kwargs)
 
-            def log_message(self, fmt, *args):
-                logger.debug("HTTP %s - %s", self.address_string(), fmt % args)
+            def log_message(self, format, *args):
+                logger.debug("HTTP %s - %s", self.address_string(), format % args)
 
         socketserver.TCPServer.allow_reuse_address = True
         try:

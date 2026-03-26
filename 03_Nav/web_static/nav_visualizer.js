@@ -276,6 +276,9 @@ const targetQuat = new THREE.Quaternion();
 // Control state
 let northOffsetDeg = 0;
 let rawHeadingDeg = 0;
+let wsHeadingDeg = null;
+let wsHeadingDir = null;
+let wsHeadingRaw = null;
 let isPaused = false;
 let lockYawOnly = false;
 let topNorthView = false;
@@ -332,10 +335,10 @@ function drawCompass(deg) {
 
 // Heading display
 const COMPASS_DIRS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
-function updateHeadingDisplay(deg) {
+function updateHeadingDisplay(deg, dirOverride = null) {
   const idx = Math.round(deg / 22.5) % 16;
   setText('heading_deg', deg.toFixed(3) + '\u00b0');
-  setText('heading_dir', COMPASS_DIRS[idx]);
+  setText('heading_dir', dirOverride || COMPASS_DIRS[idx]);
 }
 
 function getNorthVector() {
@@ -402,8 +405,10 @@ function animate() {
     headingArrow.setDirection(chipXCal.clone());
   }
   rawHeadingDeg = ((Math.atan2(chipXRaw.z, chipXRaw.x) * 180 / Math.PI) + 360) % 360;
-  const displayHeadingDeg = (rawHeadingDeg - northOffsetDeg + 360) % 360;
-  updateHeadingDisplay(displayHeadingDeg);
+  const displayHeadingDeg = (typeof wsHeadingDeg === 'number')
+    ? wsHeadingDeg
+    : (rawHeadingDeg - northOffsetDeg + 360) % 360;
+  updateHeadingDisplay(displayHeadingDeg, wsHeadingDir);
   drawCompass(displayHeadingDeg);
 
   if (topNorthView) {
@@ -1010,6 +1015,17 @@ function connect() {
     // North offset sync
     if (imu.euler?.north_offset_deg !== undefined) {
       northOffsetDeg = (360 - imu.euler.north_offset_deg) % 360;
+    }
+
+    if (imu.heading?.deg !== undefined) {
+      wsHeadingDeg = Number(imu.heading.deg);
+    }
+    if (imu.heading?.dir !== undefined) {
+      wsHeadingDir = String(imu.heading.dir);
+    }
+    if (imu.heading?.raw !== undefined) {
+      wsHeadingRaw = Number(imu.heading.raw);
+      rawHeadingDeg = wsHeadingRaw;
     }
 
     // Update panels

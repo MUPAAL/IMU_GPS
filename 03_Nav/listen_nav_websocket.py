@@ -33,7 +33,7 @@ async def listen_nav(ws_url: str):
             print("=" * 120)
             print("IMU (Euler)           | RTK Position         | RTK Fix       | Navigation State")
             print("-" * 120)
-            print("Roll  | Pitch | Yaw   | Lat (°)      | Lon (°)       | Fix Type   | Dist (m) | Heading")
+            print("Roll  | Pitch | Yaw   | Lat (°)      | Lon (°)       | Fix Type   | Dist (m) | Heading  | Dir")
             print("-" * 120)
             
             frame_count = 0
@@ -57,8 +57,9 @@ async def listen_nav(ws_url: str):
                     
                     # Extract Nav data
                     nav = data.get("nav", {})
-                    distance_m = nav.get("distance_m")
+                    distance_m = nav.get("target_distance_m")
                     heading_deg = nav.get("heading_deg")
+                    heading_dir = nav.get("heading_dir", "N/A")
                     
                     # Format output
                     lat_str = f"{lat:.8f}" if lat is not None else "N/A"
@@ -70,7 +71,7 @@ async def listen_nav(ws_url: str):
                     print(
                         f"{roll:6.2f}° | {pitch:6.2f}° | {yaw:6.2f}° | "
                         f"{lat_str} | {lon_str} | "
-                        f"{fix_str:<10} | {dist_str:>7} | {heading_str:>6}°"
+                        f"{fix_str:<10} | {dist_str:>7} | {heading_str:>6}° | {heading_dir:>4}"
                     )
                     
                     frame_count += 1
