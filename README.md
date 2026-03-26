@@ -59,7 +59,8 @@ IMU_GPS/
 ├── 01_IMU/
 │   ├── bno085_esp32c3/          # ESP32-C3 Arduino firmware (SPI, 50 Hz JSON output)
 │   │   └── bno085_esp32c3.ino
-│   ├── imu_bridge.py            # Serial → WebSocket bridge (OOP + Pipeline)
+│   ├── imu_bridge.py            # Serial → WebSocket bridge (OOP + Pipeline, heading computed in backend)
+│   ├── listen_imu_websocket.py  # Minimal WS client for debugging IMU data
 │   ├── requirements.txt
 │   └── web_static/
 │       ├── index.html
@@ -77,6 +78,7 @@ IMU_GPS/
 │
 ├── 03_Nav/
 │   ├── nav_bridge.py            # Aggregator: merges IMU + RTK into single WS feed
+│   ├── listen_nav_websocket.py  # Minimal WS client for debugging Nav data
 │   ├── requirements.txt
 │   └── web_static/
 │       ├── index.html
@@ -86,6 +88,8 @@ IMU_GPS/
 │
 ├── 04_Robot/
 │   ├── robot_bridge.py          # Amiga robot serial bridge (bidirectional, OOP + Pipeline)
+│   ├── listen_robot_websocket.py # Minimal WS client for debugging robot data
+│   ├── send_robot_only_demo.py  # Standalone demo for sending velocity commands
 │   ├── requirements.txt
 │   └── web_static/
 │       ├── index.html
@@ -238,8 +242,9 @@ python recorder_bridge.py
 ### 01_IMU — IMU Bridge
 
 - **Data flow**: `Serial → SerialReader → IMUPipeline → asyncio.Queue → WebSocketServer → Browser`
-- **Pipeline stages**: `_parse → _enrich_euler → _enrich_hz → _serialize`
-- **Features**: real-time 3D orientation (Three.js), compass HUD, north offset calibration, lock-yaw mode, top-north view (top-down with north-up), 11 sensor data cards
+- **Pipeline stages**: `_parse → _enrich_euler (+ heading) → _enrich_hz → _serialize`
+- **Features**: real-time 3D orientation (Three.js), compass HUD, north offset calibration, lock-yaw mode, top-north view (top-down with north-up), 11 sensor data cards, **heading computed in backend** and broadcast via WebSocket
+- **Debug**: `listen_imu_websocket.py` — minimal WS client to inspect raw IMU JSON output
 
 ### 02_RTK — RTK Bridge
 
@@ -251,7 +256,8 @@ python recorder_bridge.py
 
 - **Data flow**: `imu_bridge(WS) + rtk_bridge(WS) → NavLoop(10 Hz) → NavController → NavWebSocketServer → Browser`
 - **Layout**: upper 3D view (40%) + lower map (60%) | right data panel (320 px)
-- **Features**: all IMU + RTK features in a single page, unified WebSocket, heading computation, waypoint reach detection, north offset forwarding, top-north view
+- **Features**: all IMU + RTK features in a single page, unified WebSocket, heading forwarded from IMU backend, waypoint reach detection, north offset forwarding, top-north view
+- **Debug**: `listen_nav_websocket.py` — minimal WS client to inspect aggregated Nav JSON output
 
 ### 04_Robot — Amiga Robot Controller
 
@@ -259,6 +265,7 @@ python recorder_bridge.py
 - **Pipeline stages**: `_parse → _enrich_state → _enrich_hz → _enrich_odometry → _serialize`
 - **Serial protocol**: `O:{speed},{ang_rate},{state},{soc}` telemetry (~20 Hz), `S:READY`/`S:ACTIVE` status; accepts WASD single-char and `V{speed},{ang_rate}\n` commands
 - **Features**: WASD keyboard/button control, velocity sliders, E-Stop, state toggle, battery SOC bar, speed/angular rate visualizers, odometry (heading + distance), Three.js top-down robot view
+- **Debug**: `listen_robot_websocket.py` — minimal WS client to inspect robot telemetry; `send_robot_only_demo.py` — standalone demo for sending velocity commands without the full UI
 
 ### 05_AutoNav — Autonomous Navigation Engine
 

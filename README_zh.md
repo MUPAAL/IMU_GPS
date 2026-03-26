@@ -59,7 +59,8 @@ IMU_GPS/
 ├── 01_IMU/
 │   ├── bno085_esp32c3/          # ESP32-C3 Arduino 固件（SPI，50 Hz JSON 输出）
 │   │   └── bno085_esp32c3.ino
-│   ├── imu_bridge.py            # 串口 → WebSocket 桥接（OOP + Pipeline）
+│   ├── imu_bridge.py            # 串口 → WebSocket 桥接（OOP + Pipeline，航向在后端计算）
+│   ├── listen_imu_websocket.py  # 最小化 WS 客户端，用于调试 IMU 数据
 │   ├── requirements.txt
 │   └── web_static/
 │       ├── index.html
@@ -77,6 +78,7 @@ IMU_GPS/
 │
 ├── 03_Nav/
 │   ├── nav_bridge.py            # 聚合器：将 IMU + RTK 合并为单一 WS 数据流
+│   ├── listen_nav_websocket.py  # 最小化 WS 客户端，用于调试 Nav 聚合数据
 │   ├── requirements.txt
 │   └── web_static/
 │       ├── index.html
@@ -86,6 +88,8 @@ IMU_GPS/
 │
 ├── 04_Robot/
 │   ├── robot_bridge.py          # Amiga 机器人串口桥接（双向，OOP + Pipeline）
+│   ├── listen_robot_websocket.py # 最小化 WS 客户端，用于调试机器人遥测数据
+│   ├── send_robot_only_demo.py  # 独立演示脚本，直接发送速度命令
 │   ├── requirements.txt
 │   └── web_static/
 │       ├── index.html
@@ -238,8 +242,9 @@ python recorder_bridge.py
 ### 01_IMU — IMU 桥接器
 
 - **数据流**：`串口 → SerialReader → IMUPipeline → asyncio.Queue → WebSocketServer → 浏览器`
-- **Pipeline 阶段**：`_parse → _enrich_euler → _enrich_hz → _serialize`
-- **功能**：实时 3D 姿态显示（Three.js）、罗盘 HUD、北偏校准、锁定偏航模式、顶视北向视图、11 个传感器数据卡片
+- **Pipeline 阶段**：`_parse → _enrich_euler（含航向计算）→ _enrich_hz → _serialize`
+- **功能**：实时 3D 姿态显示（Three.js）、罗盘 HUD、北偏校准、锁定偏航模式、顶视北向视图、11 个传感器数据卡片；**航向在后端计算**并通过 WebSocket 广播
+- **调试工具**：`listen_imu_websocket.py` — 最小化 WS 客户端，可直接查看 IMU JSON 输出
 
 ### 02_RTK — RTK 桥接器
 
@@ -251,7 +256,8 @@ python recorder_bridge.py
 
 - **数据流**：`imu_bridge(WS) + rtk_bridge(WS) → NavLoop(10 Hz) → NavController → NavWebSocketServer → 浏览器`
 - **布局**：上方 3D 视图（40%）+ 下方地图（60%）| 右侧数据面板（320 px）
-- **功能**：在单页中整合所有 IMU + RTK 功能、统一 WebSocket 连接、航向计算、路径点到达判定、北偏校准转发、顶视北向视图
+- **功能**：在单页中整合所有 IMU + RTK 功能、统一 WebSocket 连接、直接转发 IMU 后端计算的航向、路径点到达判定、北偏校准转发、顶视北向视图
+- **调试工具**：`listen_nav_websocket.py` — 最小化 WS 客户端，可直接查看聚合后的 Nav JSON 输出
 
 ### 04_Robot — Amiga 机器人控制器
 
@@ -259,6 +265,7 @@ python recorder_bridge.py
 - **Pipeline 阶段**：`_parse → _enrich_state → _enrich_hz → _enrich_odometry → _serialize`
 - **串口协议**：`O:{speed},{ang_rate},{state},{soc}` 遥测（~20 Hz），`S:READY`/`S:ACTIVE` 状态；接受 WASD 单字符和 `V{speed},{ang_rate}\n` 速度命令
 - **功能**：WASD 键盘/按钮控制、速度滑块、紧急停止、状态切换、电池 SOC 进度条、速度/角速度可视化条、里程计（航向+距离）、Three.js 俯视机器人视图
+- **调试工具**：`listen_robot_websocket.py` — 最小化 WS 客户端，直接查看机器人遥测数据；`send_robot_only_demo.py` — 无需完整 UI 即可直接发送速度命令的独立演示脚本
 
 ### 05_AutoNav — 自主导航引擎
 
