@@ -51,6 +51,8 @@ let ws = null;
 let reconnectTimer = null;
 let currentCam = 1;
 let lastPluginListHash = "";
+let lastActivePlugin = "";
+let lastPluginList = [];
 let waitingForFirstFrame = false;
 let forceStreamReload = false;
 let viewMode = "single"; // single | both
@@ -338,19 +340,27 @@ mjpegStreamCam2.addEventListener("error", () => {
 
 function updatePluginSelect(plugins, activeName) {
   const hash = plugins.map(p => p.name).join(",");
-  if (hash === lastPluginListHash) {
+  const listChanged = hash !== lastPluginListHash;
+
+  if (listChanged) {
+    lastPluginListHash = hash;
+    lastPluginList = plugins;
+    pluginSelect.innerHTML = "";
+    plugins.forEach(p => {
+      const opt = document.createElement("option");
+      opt.value = p.name;
+      opt.textContent = p.label || p.name;
+      pluginSelect.appendChild(opt);
+    });
+    // Sync to server state only on initial load or plugin list change
     pluginSelect.value = activeName || "";
-    return;
+    lastActivePlugin = activeName || "";
+  } else if (activeName !== lastActivePlugin) {
+    // Server confirmed a different plugin became active — sync the dropdown
+    lastActivePlugin = activeName || "";
+    pluginSelect.value = activeName || "";
   }
-  lastPluginListHash = hash;
-  pluginSelect.innerHTML = "";
-  plugins.forEach(p => {
-    const opt = document.createElement("option");
-    opt.value = p.name;
-    opt.textContent = p.label || p.name;
-    pluginSelect.appendChild(opt);
-  });
-  pluginSelect.value = activeName || "";
+  // Otherwise: user may have changed the dropdown; don't overwrite their selection
 }
 
 function renderPluginConfig(plugins, activeName, currentConfig) {
@@ -410,6 +420,14 @@ btnApplyPlugin.addEventListener("click", () => {
   forceStreamReload = true;
   send({ type: "switch_plugin", plugin_name: pluginName, config: config });
   pluginConfigContainer.dataset.plugin = "";
+});
+
+pluginSelect.addEventListener("change", () => {
+  const selectedName = pluginSelect.value;
+  if (lastPluginList.length > 0) {
+    pluginConfigContainer.dataset.plugin = "";  // force re-render
+    renderPluginConfig(lastPluginList, selectedName, {});
+  }
 });
 
 // ── Init ─────────────────────────────────────────────────────────────────────
