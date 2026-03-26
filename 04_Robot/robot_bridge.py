@@ -42,6 +42,7 @@ import os
 import platform
 import threading
 import time
+import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -480,8 +481,11 @@ class RobotBridge:
         )
         ws_server.open_serial()
 
+        url = f"http://localhost:{self._ws_port}"
         logger.info("RobotBridge: http://localhost:%d  ws://localhost:%d  nav→%s",
                     self._ws_port, self._ws_port + 1, self._nav_ws_url)
+        logger.info("Open browser at %s", url)
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
         asyncio.run(ws_server.serve())
 
 

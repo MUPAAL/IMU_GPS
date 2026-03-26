@@ -473,9 +473,6 @@ class MJPEGServer:
                 continue
 
             frames, has_new_frame = self._device.get_frames(proc.required_streams())
-            if not has_new_frame:
-                time.sleep(0.001)
-                continue
             try:
                 output = proc.process(frames)
             except Exception as exc:
@@ -492,6 +489,7 @@ class MJPEGServer:
                 if ok:
                     with self._frame_lock:
                         self._latest_jpeg = buf.tobytes()
+                if has_new_frame:
                     self._tick_fps()
             else:
                 time.sleep(0.005)
