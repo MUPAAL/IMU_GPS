@@ -1,179 +1,209 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Amiga Robot Controller</title>
-  <link rel="stylesheet" href="style.css" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Farm Robot Control</title>
+<link rel="stylesheet" href="/style.css">
 </head>
 <body>
 
-  <!-- ===== Header ===== -->
-  <header>
-    <h1>Amiga Robot Controller</h1>
-    <div class="status-indicator">
-      <div class="status-dot" id="statusDot"></div>
-      <span id="statusText">Disconnected</span>
-    </div>
-  </header>
+<div id="app">
 
-  <!-- ===== Toolbar ===== -->
-  <div class="toolbar">
-    <button id="btn-reset-view" title="Reset camera to default position">Reset View</button>
-    <button id="btn-pause" class="btn-toggle" title="Freeze / resume live data">Pause</button>
+  <!-- ── Fullscreen joystick (base layer z-index:0) ── -->
+  <div id="joystick-zone">
+    <span id="joystick-hint">TOUCH TO CONTROL</span>
+    <!-- AUTO MODE overlay -->
+    <div id="auto-overlay">
+      <div id="auto-overlay-text">AUTO MODE</div>
+      <div id="auto-overlay-sub">JOYSTICK DISABLED</div>
+    </div>
   </div>
 
-  <!-- ===== Main ===== -->
-  <div class="main-container">
+  <!-- Warning banner (below top bar, z-index:20) -->
+  <div id="warn-banner">⚠ CONNECTION LOST — ROBOT STOPPED</div>
 
-    <!-- 3D Canvas -->
-    <div id="canvas-container">
-      <!-- Three.js canvas injected here by robot_visualizer.js -->
-      <div class="canvas-hint">Top-down view of robot</div>
+  <!-- ── Top bar ── -->
+  <div id="top-bar">
+    <span class="title">FARMBOT</span>
+    <span id="status-dot"></span>
+    <span id="status-text">OFFLINE</span>
+    <button id="state-btn" class="state-ready" disabled>
+      <span id="state-indicator">●</span>
+      <span id="state-label">ACTIVATE</span>
+    </button>
+    <button id="rec-btn" class="rec-idle">● REC</button>
+    <span id="rec-filename">—</span>
+  </div>
+
+  <!-- ── Top-left HUD: IMU + Compass ── -->
+  <div id="hud-left">
+    <div class="hud-panel-title">ACCEL</div>
+    <div class="hud-value"><span class="hud-label">X</span><span class="hud-num" id="acc-x">--</span></div>
+    <div class="hud-value"><span class="hud-label">Y</span><span class="hud-num" id="acc-y">--</span></div>
+    <div class="hud-value"><span class="hud-label">Z</span><span class="hud-num" id="acc-z">--</span></div>
+    <div class="hud-panel-title" style="margin-top:5px;">GYRO</div>
+    <div class="hud-value"><span class="hud-label">X</span><span class="hud-num" id="gyro-x">--</span></div>
+    <div class="hud-value"><span class="hud-label">Y</span><span class="hud-num" id="gyro-y">--</span></div>
+    <div class="hud-value"><span class="hud-label">Z</span><span class="hud-num" id="gyro-z">--</span></div>
+    <div class="hud-panel-title" style="margin-top:5px;">COMPASS</div>
+    <div id="compass-svg-wrap">
+      <svg id="compass-svg" viewBox="0 0 100 100">
+        <!-- Outer ring -->
+        <circle cx="50" cy="50" r="46" fill="none" stroke="#1e2d3d" stroke-width="2"/>
+        <!-- Cardinal ticks -->
+        <g stroke="#5a7080" stroke-width="1.5">
+          <line x1="50" y1="6"  x2="50" y2="14"/>
+          <line x1="94" y1="50" x2="86" y2="50"/>
+          <line x1="50" y1="94" x2="50" y2="86"/>
+          <line x1="6"  y1="50" x2="14" y2="50"/>
+        </g>
+        <!-- Cardinal labels -->
+        <text x="50" y="22" text-anchor="middle" fill="#00d4ff" font-size="10" font-family="Courier New">N</text>
+        <text x="50" y="84" text-anchor="middle" fill="#5a7080" font-size="9"  font-family="Courier New">S</text>
+        <text x="82" y="54" text-anchor="middle" fill="#5a7080" font-size="9"  font-family="Courier New">E</text>
+        <text x="18" y="54" text-anchor="middle" fill="#5a7080" font-size="9"  font-family="Courier New">W</text>
+        <!-- Needle group (rotated by JS) -->
+        <g id="compass-needle" transform="rotate(0,50,50)">
+          <polygon points="50,16 46,50 54,50" fill="#ff4060"/>
+          <polygon points="50,84 46,50 54,50" fill="#1e2d3d"/>
+        </g>
+        <!-- Center dot -->
+        <circle cx="50" cy="50" r="3" fill="#00d4ff"/>
+      </svg>
+      <div id="compass-bearing">---°</div>
+      <div id="compass-cardinal">--</div>
+      <div id="compass-accuracy" class="acc-0">● UNCAL</div>
     </div>
+    <div class="hud-panel-title" style="margin-top:5px;">ODOM</div>
+    <div class="hud-value"><span class="hud-label">SPD</span><span class="hud-num" id="odom-v">--</span></div>
+    <div class="hud-value"><span class="hud-label">ROT</span><span class="hud-num" id="odom-w">--</span></div>
+    <div class="hud-value"><span class="hud-label">BAT</span><span class="hud-num" id="amiga-soc">--%</span></div>
+  </div>
 
-    <!-- Data Panel -->
-    <div id="data-panel">
-
-      <!-- State Card -->
-      <div class="panel-section">
-        <h3>State</h3>
-        <div class="data-row">
-          <span class="label"><span class="state-dot boot" id="stateDot"></span>State</span>
-          <span class="value" id="stateName">BOOT</span>
-        </div>
-        <div class="data-row">
-          <span class="label">Firmware</span>
-          <span class="value" id="firmwareStatus">UNKNOWN</span>
-        </div>
+  <!-- ── Top-right HUD: RTK GPS ── -->
+  <div id="hud-right">
+    <div id="rtk-header">
+      <span id="rtk-title">RTK GPS</span>
+      <span id="rtk-fix-badge">NO FIX</span>
+      <span id="rtk-live-dot" title="RTK OFFLINE"></span>
+    </div>
+    <div class="rtk-cell">
+      <span class="rtk-cell-label">LAT</span>
+      <span class="rtk-cell-val accent" id="rtk-lat">--</span>
+    </div>
+    <div class="rtk-cell">
+      <span class="rtk-cell-label">LON</span>
+      <span class="rtk-cell-val accent" id="rtk-lon">--</span>
+    </div>
+    <div class="rtk-cell">
+      <span class="rtk-cell-label">ALT (m)</span>
+      <span class="rtk-cell-val" id="rtk-alt">--</span>
+    </div>
+    <div id="rtk-sats-row">
+      <div class="rtk-cell">
+        <span class="rtk-cell-label">SATS</span>
+        <span class="rtk-cell-val" id="rtk-sats">--</span>
       </div>
-
-      <!-- Battery Card -->
-      <div class="panel-section">
-        <h3>Battery</h3>
-        <div class="data-row">
-          <span class="label">SOC</span>
-          <span class="value" id="batteryPct">0%</span>
-        </div>
-        <div class="battery-bar-container">
-          <div class="battery-bar" id="batteryBar" style="width:0%; background:var(--green)"></div>
-        </div>
+      <div class="rtk-cell">
+        <span class="rtk-cell-label">HDOP</span>
+        <span class="rtk-cell-val" id="rtk-hdop">--</span>
       </div>
-
-      <!-- Speed Card -->
-      <div class="panel-section">
-        <h3>Speed (m/s)</h3>
-        <div class="data-row">
-          <span class="label">Measured</span>
-          <span class="value" id="measSpeed">0.000</span>
-        </div>
-        <div class="speed-bar-container">
-          <div class="speed-bar-track">
-            <div class="speed-bar" id="measSpeedBar" style="left:50%;width:0%;background:var(--cyan)"></div>
-          </div>
-        </div>
-        <div class="data-row" style="margin-top:4px">
-          <span class="label">Commanded</span>
-          <span class="value" id="cmdSpeed">0.000</span>
-        </div>
+      <div class="rtk-cell">
+        <span class="rtk-cell-label">SPD(kn)</span>
+        <span class="rtk-cell-val" id="rtk-spd">--</span>
       </div>
+    </div>
+  </div>
 
-      <!-- Angular Rate Card -->
-      <div class="panel-section">
-        <h3>Angular Rate (rad/s)</h3>
-        <div class="data-row">
-          <span class="label">Measured</span>
-          <span class="value" id="measAngRate">0.000</span>
-        </div>
-        <div class="speed-bar-container">
-          <div class="speed-bar-track">
-            <div class="speed-bar" id="measAngRateBar" style="left:50%;width:0%;background:var(--orange)"></div>
-          </div>
-        </div>
-        <div class="data-row" style="margin-top:4px">
-          <span class="label">Commanded</span>
-          <span class="value" id="cmdAngRate">0.000</span>
-        </div>
+  <!-- ── Navigation status panel (top-center, visible only during navigation) ── -->
+  <div id="nav-status-panel">
+    <div id="nav-status-grid">
+      <div class="nav-cell">
+        <span class="nav-cell-label">PROGRESS</span>
+        <span class="nav-cell-val green" id="nav-progress">—</span>
       </div>
-
-      <!-- Odometry Card -->
-      <div class="panel-section">
-        <h3>Odometry</h3>
-        <div class="data-row">
-          <span class="label">Heading</span>
-          <span class="value" id="headingDeg">0.0&deg;</span>
-        </div>
-        <div class="data-row">
-          <span class="label">Distance</span>
-          <span class="value" id="totalDistance">0.00 m</span>
-        </div>
+      <div class="nav-cell">
+        <span class="nav-cell-label">DIST (m)</span>
+        <span class="nav-cell-val" id="nav-dist">—</span>
       </div>
-
-      <!-- Control Panel -->
-      <div class="panel-section">
-        <h3>Control</h3>
-
-        <!-- WASD grid -->
-        <div class="control-grid">
-          <div></div>
-          <button class="wasd-btn" id="btn-w" data-key="w">W</button>
-          <div></div>
-          <button class="wasd-btn" id="btn-a" data-key="a">A</button>
-          <button class="wasd-btn stop-btn" id="btn-stop" data-key=" ">STOP</button>
-          <button class="wasd-btn" id="btn-d" data-key="d">D</button>
-          <div></div>
-          <button class="wasd-btn" id="btn-s" data-key="s">S</button>
-          <div></div>
-        </div>
-
-        <!-- Toggle Ready/Active -->
-        <button class="toggle-state-btn" id="btn-toggle-state">Toggle READY / ACTIVE</button>
-
-        <!-- Speed slider -->
-        <div class="slider-group">
-          <label>
-            Speed
-            <span class="slider-value" id="sliderSpeedVal">0.000</span>
-          </label>
-          <input type="range" id="slider-speed" min="-1.0" max="1.0" step="0.05" value="0" />
-        </div>
-
-        <!-- Angular Rate slider -->
-        <div class="slider-group">
-          <label>
-            Ang Rate
-            <span class="slider-value" id="sliderAngRateVal">0.000</span>
-          </label>
-          <input type="range" id="slider-ang-rate" min="-1.0" max="1.0" step="0.05" value="0" />
-        </div>
-
-        <!-- E-STOP -->
-        <button class="estop-btn" id="btn-estop">E-STOP</button>
+      <div class="nav-cell">
+        <span class="nav-cell-label">BEAR (°)</span>
+        <span class="nav-cell-val" id="nav-bearing">—</span>
       </div>
-
-      <!-- Status Row -->
-      <div class="status-row">
-        <div class="hz-display">
-          <span id="hzDisplay">&ndash; Hz</span>
-        </div>
-        <div class="uptime-display">
-          <span id="uptimeDisplay">Uptime: 0s</span>
-        </div>
+      <div class="nav-cell">
+        <span class="nav-cell-label">MODE</span>
+        <span class="nav-cell-val" id="nav-mode-disp">—</span>
       </div>
+      <div class="nav-cell">
+        <span class="nav-cell-label">FILTER</span>
+        <span class="nav-cell-val" id="nav-filter-disp">—</span>
+      </div>
+      <div class="nav-cell">
+        <span class="nav-cell-label">TOL (m)</span>
+        <span class="nav-cell-val" id="nav-tol">—</span>
+      </div>
+    </div>
+  </div>
 
-    </div><!-- #data-panel -->
-  </div><!-- .main-container -->
+  <!-- ── Bottom Control Bar: Speed + Navigation ── -->
+  <div id="bottom-bar">
+    <span id="speed-label">SPD</span>
+    <input type="range" id="speed-slider" min="10" max="100" step="10" value="50">
+    <span id="speed-value">50%</span>
+    <input type="file" id="csv-file-input" accept=".csv,text/csv">
+    <button id="nav-upload-btn">📂 CSV</button>
+    <span id="nav-wp-count">0 WP</span>
+    <button class="nav-mode-btn active" id="btn-p2p"     title="Point To Point Direct Navigation">P2P</button>
+    <button class="nav-mode-btn"        id="btn-pursuit" title="Pure Pursuit Path Tracking">PURSUIT</button>
+    <button class="nav-mode-btn active" id="btn-mavg"    title="Moving Average GPS Smoothing">M-AVG</button>
+    <button class="nav-mode-btn"        id="btn-kalman"  title="Kalman Filter GPS+IMU Fusion">KALMAN</button>
+    <button id="nav-auto-btn" class="nav-idle">▶ AUTO</button>
+    <button id="nav-force-btn" class="nav-mode-btn" title="Force start navigation even without GPS fix">FORCE</button>
+    <button id="cov-toggle-btn" class="nav-mode-btn" title="Coverage Path Planner">COV</button>
+  </div>
 
-  <!-- Three.js via CDN -->
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-    }
-  }
-  </script>
-  <script type="module" src="robot_visualizer.js"></script>
+  <!-- ── Coverage Path Planner Modal ── -->
+  <div id="cov-modal">
+    <div id="cov-panel">
+      <div class="cov-panel-title">COVERAGE PATH PLANNER</div>
+      <div class="cov-row">
+        <label class="cov-label">ROW SPACING (m)</label>
+        <input type="number" id="cov-spacing" value="1.0" min="0.1" max="50" step="0.1">
+      </div>
+      <div class="cov-row">
+        <label class="cov-label">DIRECTION (° compass, 0=N-S rows)</label>
+        <input type="number" id="cov-direction" value="0" min="0" max="359" step="1">
+      </div>
+      <div class="cov-row">
+        <label class="cov-label">OVERLAP (%)</label>
+        <input type="number" id="cov-overlap" value="0" min="0" max="90" step="5">
+      </div>
+      <div class="cov-row">
+        <label class="cov-label">TOLERANCE (m)</label>
+        <input type="number" id="cov-tolerance" value="1.0" min="0.1" max="10" step="0.1">
+      </div>
+      <div class="cov-row">
+        <label class="cov-label">BOUNDARY POINTS (one lat,lon per line)</label>
+        <textarea id="cov-boundary" rows="5" placeholder="37.123456,-122.123456&#10;37.123500,-122.123456&#10;37.123500,-122.123000&#10;37.123456,-122.123000"></textarea>
+      </div>
+      <div id="cov-status"></div>
+      <button id="cov-gen-btn">⚡ GENERATE PATH</button>
+      <button id="cov-close-btn">✕ CLOSE</button>
+    </div>
+  </div>
 
+  <!-- Hidden Joy Data Element Used By JS Update Joy UI Not Displayed In The Interface-->
+  <div id="joy-data-hidden">
+    <span id="joy-force"></span>
+    <span id="joy-linear"></span>
+    <span id="joy-angular"></span>
+    <span id="joy-dir"></span>
+  </div>
+
+</div>
+
+<script src="/nipplejs.min.js"></script>
+<script src="/app.js"></script>
 </body>
 </html>
