@@ -401,6 +401,17 @@ function updatePanel(data) {
   const calLabel = cal >= 0 && cal <= 3 ? CAL_LABELS[cal] : '–';
   setText('calText', `Cal: ${calLabel}`);
 
+  // Show calibration button if accuracy is low
+  const calButton = document.getElementById('btn-save-cal');
+  if (calButton) {
+    if (cal === 0) {
+      calButton.style.display = 'inline-block';
+      calButton.textContent = 'Save Calibration (Low Accuracy)';
+    } else {
+      calButton.style.display = 'none';
+    }
+  }
+
   // Hz
   setText('hzDisplay', data.hz !== undefined ? `${data.hz} Hz` : '– Hz');
 }
@@ -524,4 +535,12 @@ document.getElementById('btn-set-heading').addEventListener('click', () => {
   const userDeg = parseFloat(document.getElementById('manual-heading').value) || 0;
   northOffsetDeg = (rawHeadingDeg - userDeg + 360) % 360;
   sendNorthOffset(northOffsetDeg);
+});
+
+// Save calibration when accuracy is low
+document.getElementById('btn-save-cal').addEventListener('click', () => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ save_cal: true }));
+    alert('Calibration save command sent. Ensure IMU is stationary and oriented correctly.');
+  }
 });

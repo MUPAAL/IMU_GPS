@@ -37,6 +37,7 @@
 
 #include <SPI.h>
 #include <Adafruit_BNO08x.h>  // also pulls in sh2.h, sh2_SensorValue.h
+#include <ArduinoJson.h>  // Add this for JSON parsing
 
 // ---------- Pin definitions ----------
 #define SPI_MOSI  1
@@ -269,9 +270,42 @@ void handleBootButton() {
   }
 }
 
+// ---------- Handle incoming serial commands ----------
+void handleIncomingCommands() {
+  if (Serial.available()) {
+    String line = Serial.readStringUntil('\n');
+    line.trim();
+    if (line.startsWith("{")) {
+      DynamicJsonDocument doc(256);
+      DeserializationError error = deserializeJson(doc, line);
+      if (!error) {
+        const char* cmd = doc["cmd"];
+        if (strcmp(cmd, "save_cal") == 0) {
+          Serial.println("# Remote save calibration command received.");
+          int result = sh2_saveDcdNow();
+          if (result == SH2_OK) {
+            Serial.println("{\"event\":\"calibration_saved\"}");
+          } else {
+            Serial.print("# ERROR: sh2_saveDcdNow failed, code=");
+            Serial.println(result);
+          }
+        } else if (strcmp(cmd, "reset_cal") == 0) {
+          Serial.println("# Remote reset calibration command received.");
+          // Note: BNO085 doesn't have a direct reset; you might need to power cycle or use specific commands
+          Serial.println("{\"event\":\"calibration_reset\"}");
+        }
+      } else {
+        Serial.print("# JSON parse error: ");
+        Serial.println(error.c_str());
+      }
+    }
+  }
+}
+
 // ---------- Main loop ----------
 void loop() {
   readSensorData();
+  handleIncomingCommands();
   outputJSON();
   handleBootButton();
 }

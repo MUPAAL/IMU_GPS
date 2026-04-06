@@ -154,6 +154,7 @@ class IMUPipeline:
     def __init__(self, hz_tracker: FrameRateTracker, north_offset_deg: float = 0.0) -> None:
         self._hz_tracker = hz_tracker
         self._north_offset_deg: float = north_offset_deg
+        self._last_good_heading: float | None = None  # Store last reliable heading
 
     @property
     def north_offset_deg(self) -> float:
@@ -365,8 +366,21 @@ class IMUPipeline:
         corrected_heading = (raw_heading + self._north_offset_deg) % 360.0
 
         frame.heading_raw = round(raw_heading, 3)
-        frame.heading = round(corrected_heading, 3)
-        frame.heading_dir = self._heading_to_direction(corrected_heading)
+        corrected_heading = (raw_heading + self._north_offset_deg) % 360.0
+
+        # Use fallback if calibration is unreliable
+        cal = frame.extra.get("cal", 0)
+        if cal == 0 and self._last_good_heading is not None:
+            frame.heading = round(self._last_good_heading, 3)
+            frame.heading_dir = self._heading_to_direction(self._last_good_heading)
+        else:
+            frame.heading = round(corrected_heading, 3)
+            frame.heading_dir = self._heading_to_direction(corrected_heading)
+
+        # Store last good heading if calibration is medium or high
+        if cal >= 2 and frame.heading is not None:
+            self._last_good_heading = frame.heading
+
         return frame
 
     def _serialize(self, frame: IMUFrame) -> str:
@@ -396,12 +410,14 @@ class SerialReader:
         pipeline: IMUPipeline,
         loop: asyncio.AbstractEventLoop,
         queue: asyncio.Queue,
+        command_queue: asyncio.Queue,
     ) -> None:
         self._port = port
         self._baud = baud
         self._pipeline = pipeline
         self._loop = loop
         self._queue = queue
+        self._command_queue = command_queue
 
     def run(self) -> None:
         """Entry point for the serial reader thread."""
@@ -429,6 +445,12 @@ class SerialReader:
         """Inner read loop; exits on serial error to trigger reconnect."""
         while True:
             try:
+                # Check for outgoing commands to send to IMU
+                while not self._command_queue.empty():
+                    cmd = self._command_queue.get_nowait()
+                    ser.write((cmd + '\n').encode('utf-8'))
+                    logger.info(f"Sent command to IMU: {cmd}")
+
                 # ── INPUT ──────────────────────────────────────────────────────────
                 # Raw JSON bytes arrive here from the ESP32 over serial.
                 # If data looks wrong, start debugging from this line.
@@ -520,11 +542,41 @@ class WebSocketServer:
             self._clients.discard(websocket)
             logger.info(f"WebSocket client disconnected: {addr}")
 
+    @staticmethod
+    def _is_websocket_upgrade_request(request) -> bool:
+        headers = request.headers
+        connection = headers.get("Connection", "")
+        upgrade = headers.get("Upgrade", "")
+        return "upgrade" in connection.lower() and upgrade.lower() == "websocket"
+
+    async def _process_request(self, connection, request):
+        if self._is_websocket_upgrade_request(request):
+            return None
+
+        http_port = self._port - 1
+        body = (
+            "<html><head><title>WebSocket endpoint</title></head><body>"
+            "<h1>WebSocket endpoint</h1>"
+            f"<p>This port only accepts WebSocket connections.</p>"
+            f"<p>Open the web UI at <a href=\"http://localhost:{http_port}\">http://localhost:{http_port}</a>.</p>"
+            "</body></html>"
+        ).encode("utf-8")
+        headers = [
+            ("Content-Type", "text/html; charset=utf-8"),
+            ("Content-Length", str(len(body))),
+        ]
+        return 400, headers, body
+
     async def serve(self) -> None:
         """Start the WebSocket server and the broadcast coroutine."""
         logger.info(f"Starting WebSocket server on ws://localhost:{self._port}")
         asyncio.create_task(self.broadcast())
-        async with websockets.serve(self.handle_client, "0.0.0.0", self._port):
+        async with websockets.serve(
+            self.handle_client,
+            "0.0.0.0",
+            self._port,
+            process_request=self._process_request,
+        ):
             logger.info("WebSocket server running.")
             await asyncio.Future()  # run forever
 
@@ -586,6 +638,7 @@ class IMUBridge:
         self._static_dir = static_dir
         self._north_offset_deg = north_offset_deg
         self._pipeline: IMUPipeline | None = None  # set in _run_async
+        self._command_queue: asyncio.Queue | None = None  # set in _run_async
 
     def run(self) -> None:
         """Synchronous entry point — blocks until Ctrl-C."""
@@ -601,10 +654,12 @@ class IMUBridge:
     async def _run_async(self) -> None:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+        command_queue: asyncio.Queue = asyncio.Queue(maxsize=10)
 
         # -- Pipeline ----------------------------------------------------------
         hz_tracker = FrameRateTracker(window=50)
         self._pipeline = IMUPipeline(hz_tracker, north_offset_deg=self._north_offset_deg)
+        self._command_queue = command_queue
 
         # -- Serial reader thread ----------------------------------------------
         reader = SerialReader(
@@ -613,6 +668,7 @@ class IMUBridge:
             pipeline=self._pipeline,
             loop=loop,
             queue=queue,
+            command_queue=command_queue,
         )
         threading.Thread(
             target=reader.run, daemon=True, name="serial-reader"
@@ -643,6 +699,12 @@ class IMUBridge:
         )
         await ws_server.serve()
 
+    def send_command_to_imu(self, cmd: str) -> None:
+        """Enqueue a command to send to the IMU over serial."""
+        if self._command_queue is not None:
+            asyncio.create_task(self._command_queue.put(cmd))
+            logger.info(f"Enqueued command to IMU: {cmd}")
+
     def _handle_client_message(self, raw: str) -> None:
         """Parse and apply JSON control messages sent from the browser."""
         try:
@@ -662,6 +724,10 @@ class IMUBridge:
                 self._pipeline.north_offset_deg = float(msg["set_north_offset"])
             except (ValueError, TypeError) as exc:
                 logger.warning(f"Invalid set_north_offset value: {exc}")
+        elif "save_cal" in msg:
+            self.send_command_to_imu('{"cmd":"save_cal"}')
+        elif "reset_cal" in msg:
+            self.send_command_to_imu('{"cmd":"reset_cal"}')
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
