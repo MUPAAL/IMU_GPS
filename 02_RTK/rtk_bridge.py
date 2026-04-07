@@ -43,6 +43,7 @@ import asyncio
 import copy
 import json
 import logging
+import math
 import serial
 import socketserver
 import threading
@@ -167,7 +168,16 @@ class RTKSourceInfo:
 class RTKSourceManager:
     """Manage multiple RTK pipelines and expose one active source at a time."""
 
-    def __init__(self, sources: list[tuple[str, str]], default_lat: float, default_lon: float) -> None:
+    def __init__(
+        self,
+        sources: list[tuple[str, str]],
+        default_lat: float,
+        default_lon: float,
+        heading_source_a: str,
+        heading_source_b: str,
+        heading_offset_deg: float,
+        heading_min_baseline_m: float,
+    ) -> None:
         if not sources:
             raise ValueError("RTKSourceManager requires at least one source")
 
@@ -183,6 +193,10 @@ class RTKSourceManager:
         self._active_source = sources[0][0]
         self._default_lat = default_lat
         self._default_lon = default_lon
+        self._heading_source_a = heading_source_a
+        self._heading_source_b = heading_source_b
+        self._heading_offset_deg = heading_offset_deg
+        self._heading_min_baseline_m = heading_min_baseline_m
         self._lock = threading.Lock()
 
     def source_options(self) -> list[dict]:
@@ -244,6 +258,8 @@ class RTKSourceManager:
             sources = [info.to_dict() for info in self._sources.values()]
 
         frame = self._pipelines[active_source].snapshot()
+        source_frames = self._collect_source_frames(sources)
+        heading_info = self._compute_dual_rtk_heading()
         payload = frame.to_dict(
             server_ts=time.time(),
             default_lat=self._default_lat,
@@ -254,10 +270,140 @@ class RTKSourceManager:
                 "rtk_source": active_source,
                 "rtk_source_label": active_info.label,
                 "rtk_sources": sources,
+                "rtk_source_frames": source_frames,
                 "rtk_active_source": active_source,
             }
         )
+        payload.update(heading_info)
         return payload
+
+    def _collect_source_frames(self, sources: list[dict]) -> list[dict]:
+        """Return latest frame for each configured RTK source."""
+        frames: list[dict] = []
+        for source in sources:
+            source_id = source["source_id"]
+            pipeline = self._pipelines.get(source_id)
+            frame = pipeline.snapshot() if pipeline is not None else RTKFrame()
+            frames.append(
+                {
+                    "source_id": source_id,
+                    "label": source.get("label", source_id),
+                    "connected": bool(source.get("connected", False)),
+                    "lat": frame.lat,
+                    "lon": frame.lon,
+                    "alt": frame.alt,
+                    "fix_quality": frame.fix_quality,
+                    "num_sats": frame.num_sats,
+                    "hdop": frame.hdop,
+                    "speed_knots": frame.speed_knots,
+                    "track_deg": frame.track_deg,
+                    "rtk_ts": frame.rtk_ts,
+                    "has_fix": frame.lat is not None and frame.lon is not None,
+                }
+            )
+        return frames
+
+    def _compute_dual_rtk_heading(self) -> dict:
+        """
+        Compute heading from two RTK antennas.
+
+        Heading is the bearing from source A to source B in ENU frame:
+            heading = atan2(delta_east, delta_north) [deg]
+        """
+        pipeline_a = self._pipelines.get(self._heading_source_a)
+        pipeline_b = self._pipelines.get(self._heading_source_b)
+        frame_a = pipeline_a.snapshot() if pipeline_a is not None else None
+        frame_b = pipeline_b.snapshot() if pipeline_b is not None else None
+        if frame_a is None or frame_b is None:
+            return {
+                "heading_deg": None,
+                "heading_dir": None,
+                "heading_valid": False,
+                "heading_mode": "dual_rtk",
+                "heading_baseline_m": None,
+                "heading_source_a": self._heading_source_a,
+                "heading_source_b": self._heading_source_b,
+                "heading_error": "missing_source",
+            }
+
+        if frame_a.lat is None or frame_a.lon is None or frame_b.lat is None or frame_b.lon is None:
+            return {
+                "heading_deg": None,
+                "heading_dir": None,
+                "heading_valid": False,
+                "heading_mode": "dual_rtk",
+                "heading_baseline_m": None,
+                "heading_source_a": self._heading_source_a,
+                "heading_source_b": self._heading_source_b,
+                "heading_error": "missing_fix",
+            }
+
+        # Prefer RTK-grade fixes for heading stability.
+        if frame_a.fix_quality < 4 or frame_b.fix_quality < 4:
+            return {
+                "heading_deg": None,
+                "heading_dir": None,
+                "heading_valid": False,
+                "heading_mode": "dual_rtk",
+                "heading_baseline_m": None,
+                "heading_source_a": self._heading_source_a,
+                "heading_source_b": self._heading_source_b,
+                "heading_error": "insufficient_fix_quality",
+            }
+
+        d_north_m, d_east_m = self._delta_ne_m(
+            frame_a.lat,
+            frame_a.lon,
+            frame_b.lat,
+            frame_b.lon,
+        )
+        baseline_m = math.hypot(d_north_m, d_east_m)
+        if baseline_m < self._heading_min_baseline_m:
+            return {
+                "heading_deg": None,
+                "heading_dir": None,
+                "heading_valid": False,
+                "heading_mode": "dual_rtk",
+                "heading_baseline_m": baseline_m,
+                "heading_source_a": self._heading_source_a,
+                "heading_source_b": self._heading_source_b,
+                "heading_error": "baseline_too_short",
+            }
+
+        heading_raw = (math.degrees(math.atan2(d_east_m, d_north_m)) + 360.0) % 360.0
+        heading_deg = (heading_raw + self._heading_offset_deg) % 360.0
+        return {
+            "heading_deg": round(heading_deg, 3),
+            "heading_dir": self._heading_dir(heading_deg),
+            "heading_valid": True,
+            "heading_mode": "dual_rtk",
+            "heading_baseline_m": round(baseline_m, 3),
+            "heading_source_a": self._heading_source_a,
+            "heading_source_b": self._heading_source_b,
+            "heading_error": None,
+        }
+
+    @staticmethod
+    def _delta_ne_m(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple[float, float]:
+        """Approximate local north/east deltas in metres between two WGS84 points."""
+        earth_r = 6_371_000.0
+        lat1_rad = math.radians(lat1)
+        lat2_rad = math.radians(lat2)
+        d_lat = lat2_rad - lat1_rad
+        d_lon = math.radians(lon2 - lon1)
+        mean_lat = 0.5 * (lat1_rad + lat2_rad)
+        d_north = d_lat * earth_r
+        d_east = d_lon * earth_r * math.cos(mean_lat)
+        return d_north, d_east
+
+    @staticmethod
+    def _heading_dir(heading_deg: float) -> str:
+        labels = [
+            "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+            "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+        ]
+        idx = int((heading_deg + 11.25) // 22.5) % 16
+        return labels[idx]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -719,6 +865,10 @@ class RTKBridge:
         default_lat: float,
         default_lon: float,
         open_browser: bool,
+        heading_source_a: str,
+        heading_source_b: str,
+        heading_offset_deg: float,
+        heading_min_baseline_m: float,
     ) -> None:
         self._serial_ports = serial_ports
         self._baud         = baud
@@ -729,6 +879,10 @@ class RTKBridge:
         self._default_lat  = default_lat
         self._default_lon  = default_lon
         self._open_browser = open_browser
+        self._heading_source_a = heading_source_a
+        self._heading_source_b = heading_source_b
+        self._heading_offset_deg = heading_offset_deg
+        self._heading_min_baseline_m = heading_min_baseline_m
 
     def run(self) -> None:
         """Synchronous entry point: start daemon threads then hand off to asyncio."""
@@ -737,7 +891,15 @@ class RTKBridge:
             (f"rtk{index + 1}", port)
             for index, port in enumerate(self._serial_ports)
         ]
-        manager = RTKSourceManager(sources, self._default_lat, self._default_lon)
+        manager = RTKSourceManager(
+            sources,
+            self._default_lat,
+            self._default_lon,
+            heading_source_a=self._heading_source_a,
+            heading_source_b=self._heading_source_b,
+            heading_offset_deg=self._heading_offset_deg,
+            heading_min_baseline_m=self._heading_min_baseline_m,
+        )
 
         # ── 2. Serial reader daemon thread(s) ──────────────────────────────────
         readers = []
@@ -753,8 +915,15 @@ class RTKBridge:
             HttpFileServer(self._static_dir, self._http_port).start()
 
         logger.info(
-            "RTK bridge | sources=%s | HTTP=:%d  WebSocket=:%d  broadcast=%.1f Hz",
-            ", ".join(self._serial_ports), self._http_port, self._ws_port, self._hz,
+            "RTK bridge | sources=%s | heading=%s->%s (offset=%.2f°, min_baseline=%.2fm) | HTTP=:%d  WebSocket=:%d  broadcast=%.1f Hz",
+            ", ".join(self._serial_ports),
+            self._heading_source_a,
+            self._heading_source_b,
+            self._heading_offset_deg,
+            self._heading_min_baseline_m,
+            self._http_port,
+            self._ws_port,
+            self._hz,
         )
         logger.info("Open browser at http://localhost:%d", self._http_port)
 
@@ -814,6 +983,28 @@ def _parse_args() -> argparse.Namespace:
         default=True,
         help="Auto-open browser after startup (default: true)",
     )
+    parser.add_argument(
+        "--heading-source-a",
+        default=_cfg.RTK_HEADING_SOURCE_A if _cfg and hasattr(_cfg, "RTK_HEADING_SOURCE_A") else "rtk1",
+        help="Dual-RTK heading baseline start source id (default: rtk1)",
+    )
+    parser.add_argument(
+        "--heading-source-b",
+        default=_cfg.RTK_HEADING_SOURCE_B if _cfg and hasattr(_cfg, "RTK_HEADING_SOURCE_B") else "rtk2",
+        help="Dual-RTK heading baseline end source id (default: rtk2)",
+    )
+    parser.add_argument(
+        "--heading-offset-deg",
+        type=float,
+        default=_cfg.RTK_HEADING_OFFSET_DEG if _cfg and hasattr(_cfg, "RTK_HEADING_OFFSET_DEG") else 0.0,
+        help="Heading calibration offset in degrees after dual-RTK computation",
+    )
+    parser.add_argument(
+        "--heading-min-baseline-m",
+        type=float,
+        default=_cfg.RTK_HEADING_MIN_BASELINE_M if _cfg and hasattr(_cfg, "RTK_HEADING_MIN_BASELINE_M") else 0.3,
+        help="Minimum baseline length in metres required to accept dual-RTK heading",
+    )
     return parser.parse_args()
 
 
@@ -836,4 +1027,8 @@ if __name__ == "__main__":
         default_lat=DEFAULT_LAT,
         default_lon=DEFAULT_LON,
         open_browser=args.open_browser,
+        heading_source_a=args.heading_source_a,
+        heading_source_b=args.heading_source_b,
+        heading_offset_deg=args.heading_offset_deg,
+        heading_min_baseline_m=args.heading_min_baseline_m,
     ).run()

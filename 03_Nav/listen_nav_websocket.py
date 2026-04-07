@@ -30,11 +30,11 @@ async def listen_nav(ws_url: str):
         async with websockets.connect(ws_url) as websocket:
             print("✓ Connected!")
             print("\nReceiving Navigation data...\n")
-            print("=" * 120)
+            print("=" * 140)
             print("IMU (Euler)           | RTK Position         | RTK Fix       | Navigation State")
-            print("-" * 120)
-            print("Roll  | Pitch | Yaw   | Lat (°)      | Lon (°)       | Fix Type   | Dist (m) | Heading  | Dir")
-            print("-" * 120)
+            print("-" * 140)
+            print("Roll  | Pitch | Yaw   | Lat (°)      | Lon (°)       | Fix Type   | Dist (m) | Heading  | Dir | Src")
+            print("-" * 140)
             
             frame_count = 0
             async for message in websocket:
@@ -44,9 +44,9 @@ async def listen_nav(ws_url: str):
                     # Extract IMU data
                     imu = data.get("imu", {})
                     imu_euler = imu.get("euler", {})
-                    roll = imu_euler.get("roll", 0)
-                    pitch = imu_euler.get("pitch", 0)
-                    yaw = imu_euler.get("yaw", 0)
+                    roll = imu_euler.get("roll")
+                    pitch = imu_euler.get("pitch")
+                    yaw = imu_euler.get("yaw")
                     
                     # Extract RTK data
                     rtk = data.get("rtk", {})
@@ -60,18 +60,22 @@ async def listen_nav(ws_url: str):
                     distance_m = nav.get("target_distance_m")
                     heading_deg = nav.get("heading_deg")
                     heading_dir = nav.get("heading_dir", "N/A")
+                    heading_source = nav.get("heading_source", "N/A")
                     
                     # Format output
                     lat_str = f"{lat:.8f}" if lat is not None else "N/A"
                     lon_str = f"{lon:.8f}" if lon is not None else "N/A"
+                    roll_str = f"{roll:6.2f}°" if roll is not None else "   N/A"
+                    pitch_str = f"{pitch:6.2f}°" if pitch is not None else "   N/A"
+                    yaw_str = f"{yaw:6.2f}°" if yaw is not None else "   N/A"
                     fix_str = FIX_QUALITY.get(fix_quality, f"Unknown({fix_quality})")
                     dist_str = f"{distance_m:.1f}" if distance_m is not None else "N/A"
                     heading_str = f"{heading_deg:.1f}" if heading_deg is not None else "N/A"
                     
                     print(
-                        f"{roll:6.2f}° | {pitch:6.2f}° | {yaw:6.2f}° | "
+                        f"{roll_str} | {pitch_str} | {yaw_str} | "
                         f"{lat_str} | {lon_str} | "
-                        f"{fix_str:<10} | {dist_str:>7} | {heading_str:>6}° | {heading_dir:>4}"
+                        f"{fix_str:<10} | {dist_str:>7} | {heading_str:>6}° | {heading_dir:>4} | {heading_source:>6}"
                     )
                     
                     frame_count += 1

@@ -115,8 +115,10 @@ class NavController:
     Navigation state machine: manages waypoints, heading computation, and
     target-reaching logic.
 
-    Waypoints are loaded from the browser; heading is consumed from IMU payload
-    (precomputed in imu_bridge) to keep all clients consistent.
+        Waypoints are loaded from the browser; heading is resolved with priority:
+            1) dual-RTK heading from rtk_bridge
+            2) IMU heading payload (fallback)
+            3) IMU yaw conversion fallback (legacy)
     """
 
     REACH_TOLERANCE_M = 0.5  # default distance threshold
@@ -169,19 +171,34 @@ class NavController:
           2. If navigating, find current target and check reach distance
           3. Return nav dict
         """
-        # Heading from IMU payload (source of truth from imu_bridge)
-        heading = imu.get("heading", {})
         heading_deg = None
         heading_dir = None
-        if heading.get("deg") is not None:
-            heading_deg = float(heading.get("deg"))
-            heading_dir = heading.get("dir")
-        else:
-            # Fallback for older imu payloads without heading field
+        heading_source = None
+
+        # 1) Prefer dual-RTK heading when available.
+        if rtk.get("heading_valid") and rtk.get("heading_deg") is not None:
+            heading_deg = float(rtk.get("heading_deg"))
+            heading_dir = rtk.get("heading_dir")
+            heading_source = "rtk"
+
+        # 2) Fallback to IMU heading payload.
+        if heading_deg is None:
+            heading = imu.get("heading", {})
+            if heading.get("deg") is not None:
+                heading_deg = float(heading.get("deg"))
+                heading_dir = heading.get("dir")
+                heading_source = "imu"
+
+        # 3) Legacy fallback for older IMU payloads without heading block.
+        if heading_deg is None:
             euler = imu.get("euler", {})
             yaw = euler.get("yaw")
             if yaw is not None:
                 heading_deg = round((90 - yaw) % 360, 2)
+                heading_source = "imu_yaw"
+
+        if heading_deg is not None and not heading_dir:
+            heading_dir = self._heading_dir(heading_deg)
 
         # Target logic
         current_target = None
@@ -211,12 +228,22 @@ class NavController:
         return {
             "heading_deg": heading_deg,
             "heading_dir": heading_dir,
+            "heading_source": heading_source,
             "state": self._state,
             "current_target": current_target,
             "target_distance_m": target_distance_m,
             "reached_count": self._reached_count,
             "total_waypoints": len(self._waypoints),
         }
+
+    @staticmethod
+    def _heading_dir(heading_deg: float) -> str:
+        labels = [
+            "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+            "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+        ]
+        idx = int((heading_deg + 11.25) // 22.5) % 16
+        return labels[idx]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -279,6 +306,17 @@ class ImuWsClient:
             finally:
                 self._ws = None
             await asyncio.sleep(self.RECONNECT_DELAY_S)
+
+
+class NullImuClient:
+    """No-op IMU client used when running NavBridge in RTK-only mode."""
+
+    @property
+    def latest(self) -> dict:
+        return {}
+
+    async def send(self, msg: dict) -> None:
+        _ = msg
 
 
 class RtkWsClient:
@@ -486,7 +524,7 @@ class NavBridge:
     def __init__(
         self,
         nav_port: int,
-        imu_ws_url: str,
+        imu_ws_url: str | None,
         rtk_ws_url: str,
         hz: float,
         static_dir: Path,
@@ -505,7 +543,8 @@ class NavBridge:
         logger.info(
             "NavBridge starting | http=:%d  ws=:%d  hz=%.1f  imu=%s  rtk=%s",
             self._http_port, self._ws_port, self._hz,
-            self._imu_ws_url, self._rtk_ws_url,
+            self._imu_ws_url if self._imu_ws_url else "disabled",
+            self._rtk_ws_url,
         )
 
         # HTTP file server
@@ -534,7 +573,12 @@ class NavBridge:
         queue: asyncio.Queue = asyncio.Queue(maxsize=20)
 
         # Sensor clients
-        self._imu_client = ImuWsClient(self._imu_ws_url)
+        if self._imu_ws_url:
+            self._imu_client = ImuWsClient(self._imu_ws_url)
+            imu_run_task = self._imu_client.run()
+        else:
+            self._imu_client = NullImuClient()
+            imu_run_task = asyncio.sleep(3600 * 24 * 365 * 100)
         rtk_client = RtkWsClient(self._rtk_ws_url)
 
         # Navigation controller
@@ -557,7 +601,7 @@ class NavBridge:
         )
 
         await asyncio.gather(
-            self._imu_client.run(),
+            imu_run_task,
             rtk_client.run(),
             nav_loop.run(),
             ws_server.serve(),
@@ -607,6 +651,11 @@ def _parse_args() -> argparse.Namespace:
         help="WebSocket URL for imu_bridge",
     )
     parser.add_argument(
+        "--no-imu",
+        action="store_true",
+        help="Disable IMU WebSocket and run NavBridge in RTK-only mode",
+    )
+    parser.add_argument(
         "--rtk-ws",
         default=_cfg.NAV_RTK_WS if _cfg else "ws://localhost:8776",
         help="WebSocket URL for rtk_bridge",
@@ -624,7 +673,7 @@ if __name__ == "__main__":
     args = _parse_args()
     NavBridge(
         nav_port=args.nav_port,
-        imu_ws_url=args.imu_ws,
+        imu_ws_url=None if args.no_imu else args.imu_ws,
         rtk_ws_url=args.rtk_ws,
         hz=args.hz,
         static_dir=Path(__file__).parent / "web_static",

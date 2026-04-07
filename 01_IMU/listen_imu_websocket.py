@@ -9,12 +9,16 @@ Usage:
 import asyncio
 import json
 import argparse
+from pathlib import Path
 import websockets
 
 
 async def listen_imu(ws_url: str):
     """Connect to imu_bridge.py WebSocket and listen for IMU data."""
     print(f"Connecting to {ws_url}...")
+
+    raw_log_path = Path(".") / "data_log" / "imu_raw.jsonl"
+    raw_log_path.parent.mkdir(parents=True, exist_ok=True)
     
     try:
         async with websockets.connect(ws_url) as websocket:
@@ -26,7 +30,12 @@ async def listen_imu(ws_url: str):
             frame_count = 0
             async for message in websocket:
                 try:
-                    data = json.loads(message)
+                    raw_text = message.decode("utf-8", errors="replace") if isinstance(message, bytes) else str(message)
+                    with raw_log_path.open("a", encoding="utf-8") as raw_log_file:
+                        raw_log_file.write(raw_text)
+                        raw_log_file.write("\n")
+
+                    data = json.loads(raw_text)
                     
                     euler = data.get("euler", {})
                     heading_data = data.get("heading", {})

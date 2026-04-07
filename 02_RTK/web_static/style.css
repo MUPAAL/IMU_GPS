@@ -162,6 +162,64 @@ aside {
   padding: 6px;
 }
 
+.dual-rtk-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.rtk-source-card {
+  border: 1px solid #d5ddd6;
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 8px;
+}
+
+.rtk-source-card.offline {
+  opacity: 0.68;
+}
+
+.rtk-source-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 0.85rem;
+}
+
+.rtk-source-tag {
+  font-size: 0.78rem;
+  color: #4f5f55;
+  border: 1px solid #cfd8d2;
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.rtk-source-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 8px;
+  font-size: 0.82rem;
+}
+
+.rtk-source-grid span {
+  color: #5d6b61;
+}
+
+.rtk-source-grid strong {
+  justify-self: end;
+}
+
+.heading-arrow {
+  width: 18px;
+  height: 12px;
+  background: #e66b10;
+  clip-path: polygon(0 0, 100% 50%, 0 100%, 30% 50%);
+  transform-origin: 100% 50%;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.6));
+}
+
 @media (max-width: 980px) {
   main {
     grid-template-columns: 1fr;
