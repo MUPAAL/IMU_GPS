@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PathFollow Debug</title>
+  <style>
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 16px; background:#0b1220; color:#dbe7ff; }
+    .grid { display:grid; gap:12px; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); }
+    .card { border:1px solid #2a3652; border-radius:10px; padding:12px; background:#111b30; }
+    .k { color:#8fb4ff; }
+    .v { color:#d9ffd0; }
+    h1 { font-size: 18px; }
+  </style>
+</head>
+<body>
+  <h1>09_PathFollow Debug Panel</h1>
+  <div class="grid">
+    <div class="card"><div class="k">WS</div><div id="ws" class="v">connecting...</div></div>
+    <div class="card"><div class="k">center_x_norm</div><div id="cxn" class="v">-</div></div>
+    <div class="card"><div class="k">heading_err_deg</div><div id="hed" class="v">-</div></div>
+    <div class="card"><div class="k">confidence</div><div id="conf" class="v">-</div></div>
+    <div class="card"><div class="k">cmd.linear</div><div id="lin" class="v">-</div></div>
+    <div class="card"><div class="k">cmd.angular</div><div id="ang" class="v">-</div></div>
+    <div class="card"><div class="k">reason</div><div id="rea" class="v">-</div></div>
+    <div class="card"><div class="k">send_commands</div><div id="send" class="v">-</div></div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
