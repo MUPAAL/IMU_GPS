@@ -293,6 +293,12 @@ void handleIncomingCommands() {
           Serial.println("# Remote reset calibration command received.");
           // Note: BNO085 doesn't have a direct reset; you might need to power cycle or use specific commands
           Serial.println("{\"event\":\"calibration_reset\"}");
+        } else if (strcmp(cmd, "set_heading") == 0) {
+          float heading_deg = doc["heading_deg"] | 0.0;
+          Serial.print("# Remote set heading command received: ");
+          Serial.print(heading_deg, 2);
+          Serial.println(" degrees");
+          Serial.println("{\"event\":\"heading_set\"}");
         }
       } else {
         Serial.print("# JSON parse error: ");

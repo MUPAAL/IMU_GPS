@@ -176,10 +176,13 @@ let lockYawBeforeTop = false;
 // Frontend convention: display  = raw - northOffsetDeg (subtract)
 // Conversion: northOffsetDeg = (360 - server_offset) % 360
 
-function sendNorthOffset(frontendOffsetDeg) {
+function sendNorthOffset(frontendOffsetDeg, flashAfterHeading = false) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     const serverOffset = (360 - frontendOffsetDeg) % 360;
-    ws.send(JSON.stringify({ set_north_offset: serverOffset }));
+    ws.send(JSON.stringify({
+      set_north_offset: serverOffset,
+      flash_after_heading: flashAfterHeading,
+    }));
   }
 }
 
@@ -532,9 +535,15 @@ document.getElementById('btn-clear-north').addEventListener('click', () => {
 
 // Set Heading manually (user says "IMU is currently pointing at X degrees")
 document.getElementById('btn-set-heading').addEventListener('click', () => {
-  const userDeg = parseFloat(document.getElementById('manual-heading').value) || 0;
+  const userDeg = parseFloat(document.getElementById('manual-heading').value);
+  if (Number.isNaN(userDeg)) {
+    alert('Please enter a valid heading in degrees.');
+    return;
+  }
+
   northOffsetDeg = (rawHeadingDeg - userDeg + 360) % 360;
-  sendNorthOffset(northOffsetDeg);
+  const flashAfterHeading = document.getElementById('flash-after-heading').checked;
+  sendNorthOffset(northOffsetDeg, flashAfterHeading);
 });
 
 // Save calibration when accuracy is low

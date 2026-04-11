@@ -27,6 +27,8 @@ import json
 import logging
 import math
 import socketserver
+import subprocess
+import sys
 import threading
 import time
 import webbrowser
@@ -411,6 +413,7 @@ class SerialReader:
         loop: asyncio.AbstractEventLoop,
         queue: asyncio.Queue,
         command_queue: asyncio.Queue,
+        stop_event: threading.Event | None = None,
     ) -> None:
         self._port = port
         self._baud = baud
@@ -418,11 +421,12 @@ class SerialReader:
         self._loop = loop
         self._queue = queue
         self._command_queue = command_queue
+        self._stop_event = stop_event or threading.Event()
 
     def run(self) -> None:
         """Entry point for the serial reader thread."""
         logger.info(f"Opening serial port {self._port} at {self._baud} baud.")
-        while True:
+        while not self._stop_event.is_set():
             try:
                 with serial.Serial(self._port, self._baud, timeout=1.0) as ser:
                     logger.info(f"Serial port {self._port} opened successfully.")
@@ -443,7 +447,7 @@ class SerialReader:
 
     def _read_loop(self, ser: serial.Serial) -> None:
         """Inner read loop; exits on serial error to trigger reconnect."""
-        while True:
+        while not self._stop_event.is_set():
             try:
                 # Check for outgoing commands to send to IMU
                 while not self._command_queue.empty():
@@ -639,6 +643,10 @@ class IMUBridge:
         self._north_offset_deg = north_offset_deg
         self._pipeline: IMUPipeline | None = None  # set in _run_async
         self._command_queue: asyncio.Queue | None = None  # set in _run_async
+        self._queue: asyncio.Queue | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._serial_stop_event: threading.Event | None = None
+        self._reader_thread: threading.Thread | None = None
 
     def run(self) -> None:
         """Synchronous entry point — blocks until Ctrl-C."""
@@ -659,20 +667,12 @@ class IMUBridge:
         # -- Pipeline ----------------------------------------------------------
         hz_tracker = FrameRateTracker(window=50)
         self._pipeline = IMUPipeline(hz_tracker, north_offset_deg=self._north_offset_deg)
+        self._queue = queue
         self._command_queue = command_queue
+        self._loop = loop
 
         # -- Serial reader thread ----------------------------------------------
-        reader = SerialReader(
-            port=self._serial_port,
-            baud=self._baud,
-            pipeline=self._pipeline,
-            loop=loop,
-            queue=queue,
-            command_queue=command_queue,
-        )
-        threading.Thread(
-            target=reader.run, daemon=True, name="serial-reader"
-        ).start()
+        self._start_serial_reader()
 
         # -- HTTP static file server thread ------------------------------------
         if not self._static_dir.exists():
@@ -699,11 +699,65 @@ class IMUBridge:
         )
         await ws_server.serve()
 
+    def _start_serial_reader(self) -> None:
+        if self._loop is None or self._queue is None or self._command_queue is None or self._pipeline is None:
+            logger.error("Cannot start serial reader; bridge not fully initialized.")
+            return
+        self._serial_stop_event = threading.Event()
+        reader = SerialReader(
+            port=self._serial_port,
+            baud=self._baud,
+            pipeline=self._pipeline,
+            loop=self._loop,
+            queue=self._queue,
+            command_queue=self._command_queue,
+            stop_event=self._serial_stop_event,
+        )
+        self._reader_thread = threading.Thread(
+            target=reader.run,
+            daemon=True,
+            name="serial-reader",
+        )
+        self._reader_thread.start()
+        logger.info("Serial reader thread started.")
+
+    def _stop_serial_reader(self, timeout: float = 5.0) -> None:
+        if self._serial_stop_event is None or self._reader_thread is None:
+            return
+        self._serial_stop_event.set()
+        logger.info("Stopping serial reader thread for firmware flash...")
+        self._reader_thread.join(timeout)
+        if self._reader_thread.is_alive():
+            logger.warning("Serial reader thread did not stop in time.")
+        else:
+            logger.info("Serial reader thread stopped.")
+        self._reader_thread = None
+        self._serial_stop_event = None
+
     def send_command_to_imu(self, cmd: str) -> None:
         """Enqueue a command to send to the IMU over serial."""
         if self._command_queue is not None:
             asyncio.create_task(self._command_queue.put(cmd))
             logger.info(f"Enqueued command to IMU: {cmd}")
+
+    def _flash_firmware(self) -> None:
+        script_path = Path(__file__).resolve().parent / "flash_imu_firmware.py"
+        if not script_path.exists():
+            logger.error(f"Firmware flash script not found: {script_path}")
+            return
+
+        self._stop_serial_reader()
+        cmd = [sys.executable, str(script_path), "--port", self._serial_port]
+        logger.info(f"Starting firmware flash: {' '.join(cmd)}")
+        try:
+            subprocess.run(cmd, cwd=script_path.parent, check=True)
+            logger.info("Firmware flash completed successfully.")
+        except subprocess.CalledProcessError as exc:
+            logger.error(f"Firmware flash failed: {exc}")
+        except FileNotFoundError as exc:
+            logger.error(f"Firmware flash helper not found: {exc}")
+        finally:
+            self._start_serial_reader()
 
     def _handle_client_message(self, raw: str) -> None:
         """Parse and apply JSON control messages sent from the browser."""
@@ -721,9 +775,17 @@ class IMUBridge:
                 logger.warning("Pipeline not ready; ignoring set_north_offset.")
                 return
             try:
-                self._pipeline.north_offset_deg = float(msg["set_north_offset"])
+                north_offset_deg = float(msg["set_north_offset"])
             except (ValueError, TypeError) as exc:
                 logger.warning(f"Invalid set_north_offset value: {exc}")
+                return
+            self._pipeline.north_offset_deg = north_offset_deg
+            self.send_command_to_imu(json.dumps({
+                "cmd": "set_heading",
+                "heading_deg": north_offset_deg,
+            }))
+            if msg.get("flash_after_heading"):
+                threading.Thread(target=self._flash_firmware, daemon=True).start()
         elif "save_cal" in msg:
             self.send_command_to_imu('{"cmd":"save_cal"}')
         elif "reset_cal" in msg:
