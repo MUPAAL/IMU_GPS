@@ -42,8 +42,8 @@ pip install pyserial websockets depthai opencv-python numpy
                       ▲ IMU  ▲ RTK         │ 速度指令
                       │      │             │
                     ┌──────────────────┐    │  WS :8826
-                    │ recorder_bridge  │────┘─────────→  浏览器
-                    │  (07_Recorder)   │              http :8825
+                    │   sim/replay hub │────┘─────────→  浏览器
+                    │  (07_SimReplay)  │
                     └──────────────────┘
 
 ┌─────────────┐                      ┌───────────────┐  WS :8816
@@ -62,7 +62,7 @@ pip install pyserial websockets depthai opencv-python numpy
 | `04_Robot` | 8795 | 8796 | Amiga 机器人控制器（遥测 + WASD/速度控制） |
 | `05_AutoNav` | 8805 | 8806 | 自主导航引擎（GPS+IMU PID/PurePursuit 控制） |
 | `06_Camera` | 8815 | 8816 | OAK-D 摄像头 MJPEG 流（视频在 8080/8081） |
-| `07_Recorder` | 8825 | 8826 | 多源 CSV 数据录制器 |
+| `07_SimReplay` | - | - | 离线联调用回放/模拟工具集合 |
 
 ## 目录结构
 
@@ -118,10 +118,11 @@ IMU_GPS/
 │       ├── style.css
 │       └── snapshots/           # 自动创建；存放各次会话的 HTML 像素检视快照
 │
-├── 07_Recorder/
-│   ├── recorder_bridge.py       # 多源 CSV 录制器（IMU+RTK+Robot）
-│   ├── requirements.txt
-│   └── web_static/
+├── 07_SimReplay/
+│   ├── start_nav_with_replay.sh # 一键：01回放 + 02回放 + 03导航 + 监听（tmux）
+│   ├── sim_robot_ws_server.py   # 本地机器人 WS 模拟器
+│   ├── demo_filter_by_type.py   # 模拟器/机器人 WS 按类型过滤监听示例
+│   └── README.md
 │
 ├── CIRCUITPY/                   # Adafruit Feather M4 CAN 的 CircuitPython 固件
 │   └── code.py
@@ -195,7 +196,7 @@ cd 03_Nav && python nav_bridge.py          # http://localhost:8785
 cd 04_Robot && python robot_bridge.py      # http://localhost:8795
 cd 05_AutoNav && python autonav_bridge.py  # http://localhost:8805
 cd 06_Camera && python camera_bridge.py   # http://localhost:8815
-cd 07_Recorder && python recorder_bridge.py # http://localhost:8825
+cd 07_SimReplay && ./start_nav_with_replay.sh # 用 01/02 回放喂给 03_Nav
 ```
 
 ### 4. 摄像头 — 深度与视差开关
@@ -330,11 +331,11 @@ class MyPlugin(FrameProcessor):
 | 需要深度感知（推荐）| `STEREO=True, DISPARITY=False` |
 | 调试视差插件 | `STEREO=True, DISPARITY=True` |
 
-### 07_Recorder — 多源数据录制器
+### 07_SimReplay — 回放/模拟中心
 
-- **数据流**：`imu_bridge + rtk_bridge + robot_bridge → RecordLoop(5 Hz) → DataRecorder → CSV`
-- **CSV 列**：时间戳、四元数（i/j/k/r）、欧拉角（yaw/pitch/roll）、GPS（经纬度/高度/定位/卫星/HDOP/速度/航向）、机器人（速度/角速度/状态/电量/距离/航向）
-- **功能**：开始/停止录制、文件列表（下载/删除）、数据源连接状态指示
+- **目标**：通过录制数据回放，让下游模块在无硬件时也能联调。
+- **一键链路**：`./07_SimReplay/start_nav_with_replay.sh` 会启动 IMU 回放 + RTK 回放 + Nav bridge + Nav 监听。
+- **典型场景**：`03_Nav` 依赖 `01_IMU` 和 `02_RTK` 输入，但手头没有设备时。
 
 ## 硬件连接
 

@@ -17,7 +17,7 @@ from typing import List
 
 import websockets
 
-INPUT_PATH = Path(__file__).parent / "data_log" / "rtk_raw_v1.jsonl"
+INPUT_PATH = Path(__file__).parent / "data_log" / "rtk_raw_v2.jsonl"
 HOST = "0.0.0.0"
 PORT = 8776
 HZ = 5.0

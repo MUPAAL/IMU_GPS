@@ -42,8 +42,8 @@ A real-time sensor fusion platform for farm robots, combining a BNO085 IMU with 
                       ▲ IMU  ▲ RTK         │ velocity commands
                       │      │             │
                     ┌──────────────────┐    │  WS :8826
-                    │ recorder_bridge  │────┘─────────→  Browser
-                    │  (07_Recorder)   │              http :8825
+                    │   sim/replay hub │────┘─────────→  Browser
+                    │  (07_SimReplay)  │
                     └──────────────────┘
 
 ┌─────────────┐                      ┌───────────────┐  WS :8816
@@ -62,7 +62,7 @@ Each bridge serves its own static web UI over HTTP:
 | `04_Robot` | 8795 | 8796 | Amiga robot controller (telemetry + WASD/velocity) |
 | `05_AutoNav` | 8805 | 8806 | Autonomous navigation (GPS+IMU PID/PurePursuit) |
 | `06_Camera` | 8815 | 8816 | OAK-D camera MJPEG streaming (video on 8080/8081) |
-| `07_Recorder` | 8825 | 8826 | Multi-source CSV data recorder |
+| `07_SimReplay` | - | - | Replay/simulation helpers for offline integration |
 
 ## Directory Structure
 
@@ -118,10 +118,11 @@ IMU_GPS/
 │       ├── style.css
 │       └── snapshots/           # Auto-created; holds per-session HTML snapshot files
 │
-├── 07_Recorder/
-│   ├── recorder_bridge.py       # Multi-source CSV recorder (IMU+RTK+Robot)
-│   ├── requirements.txt
-│   └── web_static/
+├── 07_SimReplay/
+│   ├── start_nav_with_replay.sh # One-click: 01 replay + 02 replay + 03 nav + listener (tmux)
+│   ├── sim_robot_ws_server.py   # Local fake robot WS simulator
+│   ├── demo_filter_by_type.py   # Filtered listener demo for simulator/robot WS
+│   └── README.md
 │
 ├── CIRCUITPY/                   # CircuitPython firmware for Adafruit Feather M4 CAN
 │   └── code.py
@@ -195,7 +196,7 @@ cd 03_Nav && python nav_bridge.py          # http://localhost:8785
 cd 04_Robot && python robot_bridge.py      # http://localhost:8795
 cd 05_AutoNav && python autonav_bridge.py  # http://localhost:8805
 cd 06_Camera && python camera_bridge.py   # http://localhost:8815
-cd 07_Recorder && python recorder_bridge.py # http://localhost:8825
+cd 07_SimReplay && ./start_nav_with_replay.sh # 01/02 replay feed 03_Nav
 ```
 
 ### 4. Camera — depth and disparity flags
@@ -322,11 +323,11 @@ Click **Capture Frame** in the browser control panel. A self-contained HTML file
 | `--stereo` / `--no-stereo` | `CAM_ENABLE_STEREO` | `True` | Enable Left/Right/StereoDepth nodes → depth stream |
 | `--disparity` / `--no-disparity` | `CAM_ENABLE_DISPARITY` | `False` | Enable raw disparity queue (additional CPU/bandwidth) |
 
-### 07_Recorder — Multi-Source Data Recorder
+### 07_SimReplay — Replay/Simulation Hub
 
-- **Data flow**: `imu_bridge + rtk_bridge + robot_bridge → RecordLoop(5 Hz) → DataRecorder → CSV`
-- **CSV columns**: timestamp, quaternion (i/j/k/r), euler (yaw/pitch/roll), GPS (lat/lon/alt/fix/sats/hdop/speed/track), robot (speed/ang_rate/state/soc/distance/heading)
-- **Features**: start/stop recording, file list (download/delete), source connection indicators
+- **Goal**: run downstream modules without hardware by replaying recorded JSONL data.
+- **One-click stack**: `./07_SimReplay/start_nav_with_replay.sh` starts IMU replay + RTK replay + Nav bridge + Nav listener.
+- **Use case**: when `03_Nav` needs `01_IMU` and `02_RTK` inputs but devices are unavailable.
 
 ## Hardware
 
