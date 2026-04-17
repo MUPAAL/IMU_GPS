@@ -77,6 +77,7 @@ class IMUFrame:
     qj: float
     qk: float
     qr: float
+    acc: float
     roll: float | None = None
     pitch: float | None = None
     yaw: float | None = None
@@ -90,7 +91,7 @@ class IMUFrame:
     def to_dict(self) -> dict:
         """Serialise frame to the outbound dict shape expected by the browser."""
         payload: dict = {
-            "rot": {"qi": self.qi, "qj": self.qj, "qk": self.qk, "qr": self.qr},
+            "rot": {"qi": self.qi, "qj": self.qj, "qk": self.qk, "qr": self.qr, "acc": self.acc},
         }
         if self.roll is not None:
             payload["euler"] = {
@@ -209,6 +210,7 @@ class IMUPipeline:
             qj=rot.get("qj", 0.0),
             qk=rot.get("qk", 0.0),
             qr=rot.get("qr", 1.0),
+            acc=rot.get("acc", 0.0),
             north_offset_deg=self._north_offset_deg,
             extra=extra,
         )
