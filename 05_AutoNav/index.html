@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AutoNav — Farm Robot</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header>
+    <div class="header-left">
+      <span class="logo">⬡</span>
+      <span class="title">AUTONAV</span>
+    </div>
+    <div class="header-status">
+      <span class="status-pill" id="ws-status">WS</span>
+      <span class="status-pill" id="robot-status">ROBOT</span>
+      <span class="status-pill" id="gps-status">GPS</span>
+      <span class="soc-label" id="soc-label">—%</span>
+    </div>
+  </header>
+
+  <!-- ── CAMERA SECTION ──────────────────────────────────────────────── -->
+  <section class="camera-section">
+    <div class="cam-toolbar">
+      <button class="cam-btn active" id="cam1-btn" onclick="switchCam(1)">CAM 1</button>
+      <button class="cam-btn" id="cam2-btn" onclick="switchCam(2)">CAM 2</button>
+      <span class="cam-label" id="cam-label">OAK-D · CAM 1</span>
+      <span class="cam-spacer"></span>
+      <span class="telemetry-inline" id="vel-display">0.00 m/s · 0.00 rad/s</span>
+    </div>
+    <div class="cam-frame">
+      <img id="cam-feed" src="" alt="Camera feed" />
+      <div class="cam-overlay" id="cam-overlay">
+        <span>NO SIGNAL</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── CONTROLS SECTION ───────────────────────────────────────────── -->
+  <section class="controls-section">
+
+    <!-- Telemetry strip -->
+    <div class="telem-strip">
+      <div class="telem-cell">
+        <span class="telem-val" id="heading-val">—°</span>
+        <span class="telem-key">HDG</span>
+      </div>
+      <div class="telem-cell">
+        <span class="telem-val" id="dist-val">—m</span>
+        <span class="telem-key">DIST</span>
+      </div>
+      <div class="telem-cell">
+        <span class="telem-val" id="nav-state-val">IDLE</span>
+        <span class="telem-key">MODE</span>
+      </div>
+      <div class="telem-cell">
+        <span class="telem-val" id="wp-val">—/—</span>
+        <span class="telem-key">WP</span>
+      </div>
+    </div>
+
+    <!-- Joystick + toggle -->
+    <div class="joystick-row">
+
+      <!-- Left: state toggle -->
+      <div class="side-panel left-panel">
+        <button class="toggle-btn" id="toggle-btn" onclick="toggleState()">
+          <span class="toggle-icon">▶</span>
+          <span class="toggle-label" id="toggle-label">START</span>
+        </button>
+        <div class="nav-mode-box">
+          <span class="nav-mode-val" id="nav-mode-val">—</span>
+          <span class="nav-mode-key">NAV MODE</span>
+        </div>
+      </div>
+
+      <!-- Center: joystick -->
+      <div class="joystick-container" id="joystick-container">
+        <div class="joystick-ring">
+          <div class="joystick-crosshair"></div>
+          <div class="joystick-thumb" id="joystick-thumb"></div>
+        </div>
+      </div>
+
+      <!-- Right: velocity readout -->
+      <div class="side-panel right-panel">
+        <div class="vel-box">
+          <div class="vel-bar-wrap">
+            <div class="vel-bar-fill" id="lin-bar"></div>
+          </div>
+          <span class="vel-val" id="lin-val">0.00</span>
+          <span class="vel-key">LIN m/s</span>
+        </div>
+        <div class="vel-box">
+          <div class="vel-bar-wrap">
+            <div class="vel-bar-fill ang" id="ang-bar"></div>
+          </div>
+          <span class="vel-val" id="ang-val">0.00</span>
+          <span class="vel-key">ANG rad/s</span>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

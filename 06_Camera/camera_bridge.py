@@ -901,7 +901,20 @@ class WebSocketServer:
         while True:
             if self._clients:
                 status = self._pipeline.get_status()
-                message = json.dumps(status.to_dict())
+                d = status.to_dict()
+                # Attach target from path_cam processor if active
+                try:
+                    srv = self._pipeline._servers.get(
+                        self._pipeline._cam_selection
+                    )
+                    if srv:
+                        with srv._processor_lock:
+                            proc = srv._processor
+                        target = getattr(proc, "last_target", None)
+                        d["path_target"] = target
+                except Exception:
+                    d["path_target"] = None
+                message = json.dumps(d)
                 dead: set = set()
                 for ws in self._clients.copy():
                     try:
@@ -1160,7 +1173,7 @@ def _parse_args() -> argparse.Namespace:
         help="JPEG encoding quality 1-100",
     )
     parser.add_argument(
-        "--plugin", default=_c.CAM_DEFAULT_PLUGIN if _c else "simple_color",
+        "--plugin", default=_c.CAM_DEFAULT_PLUGIN if _c else "path_cam",
         help="Initial plugin name",
     )
     parser.add_argument(

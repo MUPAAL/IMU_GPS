@@ -172,6 +172,23 @@
     <span id="joy-dir"></span>
   </div>
 
+<!-- ── Camera Feed ── -->
+<div id="cam-section">
+  <div id="cam-toolbar">
+    <button class="cam-toggle active" id="btn-cam1" onclick="setCam(1)">CAM 1</button>
+    <button class="cam-toggle" id="btn-cam2" onclick="setCam(2)">CAM 2</button>
+    <span class="cam-divider">|</span>
+    <button class="cam-toggle active" id="btn-mode-detect" onclick="setMode('detect')">DETECT</button>
+    <button class="cam-toggle" id="btn-mode-live" onclick="setMode('live')">LIVE</button>
+    <button class="cam-toggle" id="btn-mode-mask" onclick="setMode('mask')">MASK</button>
+    <span id="cam-status">NO SIGNAL</span>
+  </div>
+  <div id="cam-frame">
+    <img id="cam-img" src="" alt="camera feed" />
+    <div id="cam-nosignal">NO SIGNAL</div>
+  </div>
+</div>
+
 </div>
 
 <script src="/nipplejs.min.js"></script>

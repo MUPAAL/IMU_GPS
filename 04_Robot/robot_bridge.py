@@ -48,6 +48,9 @@ from pathlib import Path
 
 import serial
 import websockets
+import subprocess as _subprocess
+import sys as _sys
+from pathlib import Path as _Path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -178,6 +181,43 @@ class NavBridgeClient:
                 logger.warning("NavBridgeClient: %s — retry in 3s", exc)
                 await asyncio.sleep(3)
 
+# ── CameraBridgeClient (for testing) ─────────────────────────────────────────
+class CamBridgeClient:
+    """Connects to camera_bridge WS, reads path_target, drives robot."""
+
+    def __init__(self, url: str, send_velocity_fn):
+        self._url             = url
+        self._send_velocity   = send_velocity_fn
+
+    async def run(self) -> None:
+        while True:
+            try:
+                async with websockets.connect(self._url) as ws:
+                    logger.info("CamBridgeClient: connected to %s", self._url)
+                    async for raw in ws:
+                        try:
+                            msg = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                        target = msg.get("path_target")
+                        if target is not None:
+                            x_norm, y_norm = target
+                            # PID-style steering: scale angular by x offset
+                            linear  =  0.3                    # constant forward speed
+                            angular = -x_norm * 1.0           # negative = turn towards target
+                            direction = "CENTER"
+                            if x_norm < -0.1:
+                                direction = "LEFT"
+                            elif x_norm > 0.1:
+                                direction = "RIGHT"
+                            print(f"[PATH] x={x_norm:+.3f} y={y_norm:.3f} → {direction}  cmd=({linear:.2f}, {angular:.2f})")
+                            self._send_velocity(linear, angular)
+                        else:
+                            print("[PATH] no target → stop")
+                            self._send_velocity(0.0, 0.0)
+            except Exception as exc:
+                logger.warning("CamBridgeClient: %s — retry in 3s", exc)
+                await asyncio.sleep(3)
 
 # ── Robot WebSocket server ────────────────────────────────────────────────────
 
@@ -424,10 +464,16 @@ class RobotWebSocketServer:
             ping_interval=20, ping_timeout=10,
         ):
             logger.info("RobotWebSocketServer: ws://0.0.0.0:%d", self._port)
+            cam_client = CamBridgeClient(
+            url              = "ws://localhost:8816",
+            send_velocity_fn = self._send_velocity,
+            )
+
             await asyncio.gather(
                 self._odom_broadcast_loop(),
                 self._watchdog_loop(),
                 nav_client.run(),
+                cam_client.run(),
             )
 
 
@@ -467,6 +513,18 @@ class RobotBridge:
             max_linear  = self._max_linear,
             max_angular = self._max_angular,
         )
+        #EDITS
+        # Start yellow detector as a subprocess
+        _detector_path = _Path(__file__).parent / "yellow_detector.py"
+        if _detector_path.exists():
+            _subprocess.Popen(
+                [_sys.executable, str(_detector_path)],
+                stdout=_subprocess.DEVNULL,
+                stderr=_subprocess.DEVNULL,
+            )
+            logger.info("Started yellow_detector.py on port 8082")
+        else:
+            logger.warning("yellow_detector.py not found — camera detection disabled")
         http_server.start()
 
         ws_server = RobotWebSocketServer(
@@ -490,7 +548,7 @@ class RobotBridge:
 
 
 def _default_serial_port() -> str:
-    return "/dev/cu.usbmodem11301" if platform.system() == "Darwin" else "/dev/ttyACM0"
+    return "/dev/cu.usbmodem1301" if platform.system() == "Darwin" else "/dev/ttyACM0"
 
 
 def _parse_args() -> argparse.Namespace:

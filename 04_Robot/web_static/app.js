@@ -326,3 +326,54 @@ window.addEventListener('load', () => {
 
   connect();
 });
+
+
+// ── Camera Feed ──────────────────────────────────────────────
+const DETECTOR_URL = `http://${window.location.hostname}:8082`;
+const CAM_URLS = {
+  1: `http://${window.location.hostname}:8080/`,
+  2: `http://${window.location.hostname}:8081/`,
+};
+
+let currentCam = 1;
+let currentMode = 'detect';
+
+function setMode(mode) {
+  currentMode = mode;
+  ['detect','live','mask'].forEach(m => {
+    document.getElementById('btn-mode-' + m).classList.toggle('active', m === mode);
+  });
+  updateFeedSrc();
+}
+
+function setCam(n) {
+  currentCam = n;
+  document.getElementById('btn-cam1').classList.toggle('active', n === 1);
+  document.getElementById('btn-cam2').classList.toggle('active', n === 2);
+  updateFeedSrc();
+}
+
+function updateFeedSrc() {
+  const img = document.getElementById('cam-img');
+  const nosignal = document.getElementById('cam-nosignal');
+  const status = document.getElementById('cam-status');
+  nosignal.classList.remove('hidden');
+  status.textContent = 'CONNECTING...';
+  // detect/live/mask all come from yellow_detector on port 8082
+  img.src = `${DETECTOR_URL}/${currentMode}?t=${Date.now()}`;
+}
+
+document.getElementById('cam-img').addEventListener('load', () => {
+  document.getElementById('cam-nosignal').classList.add('hidden');
+  document.getElementById('cam-status').textContent = currentMode.toUpperCase() + ' · CAM ' + currentCam;
+});
+
+document.getElementById('cam-img').addEventListener('error', () => {
+  document.getElementById('cam-nosignal').classList.remove('hidden');
+  document.getElementById('cam-status').textContent = 'NO SIGNAL';
+  setTimeout(() => updateFeedSrc(), 3000);
+});
+
+window.addEventListener('load', () => {
+    setTimeout(() => setCam(1), 500);
+});

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# start_bridges.sh — Start 01~04, 06 bridges in a tmux session with tiled layout
+# start_bridges.sh — Start 01~04, 05, 06 bridges in a tmux session with tiled layout
 #
-# Layout (2x2 + 1):
+# Layout (2x3 tiled):
 #   ┌──────────────┬──────────────┐
 #   │  01_IMU      │  02_RTK      │
 #   ├──────────────┼──────────────┤
 #   │  03_Nav      │  04_Robot    │
 #   ├──────────────┼──────────────┤
-#   │  06_Camera              │
+#   │  05_AutoNav  │  06_Camera   │
 #   └──────────────┴──────────────┘
 
 SESSION="bridges"
@@ -40,8 +40,12 @@ tmux split-window -t "$SESSION:0.0" -v \
 tmux split-window -t "$SESSION:0.1" -v \
     "cd '$ROOT/04_Robot' && python robot_bridge.py"
 
-# Pane 0.4 — 06_Camera (bottom, split vertically from 0.2)
+# Pane 0.4 — 05_AutoNav (bottom-left, split vertically from 0.2)
 tmux split-window -t "$SESSION:0.2" -v \
+    "cd '$ROOT/05_AutoNav' && python autonav_bridge.py"
+
+# Pane 0.5 — 06_Camera (bottom-right, split vertically from 0.3)
+tmux split-window -t "$SESSION:0.3" -v \
     "cd '$ROOT/06_Camera' && python camera_bridge.py"
 
 # Arrange all panes uniformly in a grid
@@ -52,7 +56,8 @@ tmux select-pane -t "$SESSION:0.0" -T "01_IMU"
 tmux select-pane -t "$SESSION:0.1" -T "02_RTK"
 tmux select-pane -t "$SESSION:0.2" -T "03_Nav"
 tmux select-pane -t "$SESSION:0.3" -T "04_Robot"
-tmux select-pane -t "$SESSION:0.4" -T "06_Camera"
+tmux select-pane -t "$SESSION:0.4" -T "05_AutoNav"
+tmux select-pane -t "$SESSION:0.5" -T "06_Camera"
 
 # Focus top-left pane
 tmux select-pane -t "$SESSION:0.0"

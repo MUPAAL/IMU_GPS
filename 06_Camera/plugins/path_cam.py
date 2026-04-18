@@ -68,6 +68,7 @@ class PathCamProcessor(FrameProcessor):
 
     def __init__(self, **kwargs) -> None:
         self._display_mode = kwargs.get("display_mode", "target")
+        self.last_target = None  # (x_norm, y_norm) or None; -1=left, 0=center, +1=right
 
     def reconfigure(self, **kwargs) -> None:
         self._display_mode = kwargs.get("display_mode", self._display_mode)
@@ -123,6 +124,19 @@ class PathCamProcessor(FrameProcessor):
             if best_score is None or score < best_score:
                 best_score = score
                 best_contour = contour
+
+        # Store normalized target for external reading
+        if best_contour is not None:
+            M = cv2.moments(best_contour)
+            if M["m00"] > 0:
+                cx = int(M["m10"] / M["m00"]) + roi_x1
+                cy = int(M["m01"] / M["m00"]) + roi_y1
+                self.last_target = (
+                    round((cx / w - 0.5) * 2, 3),  # -1=left, 0=center, +1=right
+                    round(cy / h, 3),               # 0=top, 1=bottom
+                )
+        else:
+            self.last_target = None
 
         # Highlight best contour green in target view
         target_view = yellow_only.copy()

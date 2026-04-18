@@ -44,7 +44,7 @@ NAV_REACH_TOLERANCE_M = 0.5                       # Waypoint arrival tolerance (
 # ══════════════════════════════════════════════════════════════════════════════
 
 ROBOT_WS_PORT          = 8888                      # HTTP port; WebSocket = ROBOT_WS_PORT + 1
-ROBOT_SERIAL_PORT      = "/dev/cu.usbmodem2403"   # Feather M4 serial port (Linux: /dev/ttyACM0)
+ROBOT_SERIAL_PORT      = "/dev/cu.usbmodem1301"   # Feather M4 serial port (Linux: /dev/ttyACM0)
 ROBOT_SERIAL_BAUD      = 115200                    # Serial baud rate
 ROBOT_SERIAL_TIMEOUT   = 1.0                       # Serial read timeout (seconds)
 ROBOT_MAX_LINEAR       = 1.0                       # Max linear velocity (m/s)
@@ -60,7 +60,7 @@ ROBOT_NAV_WS           = "ws://localhost:8786"     # nav_bridge WebSocket URL
 AUTONAV_WS_PORT         = 8805                      # HTTP port; WebSocket = AUTONAV_WS_PORT + 1
 AUTONAV_IMU_WS          = "ws://localhost:8766"     # imu_bridge WebSocket URL
 AUTONAV_RTK_WS          = "ws://localhost:8776"     # rtk_bridge WebSocket URL
-AUTONAV_ROBOT_WS        = "ws://localhost:8796"     # robot_bridge WebSocket URL
+AUTONAV_ROBOT_WS        = "ws://localhost:8889"     # robot_bridge WebSocket URL
 AUTONAV_MAX_LINEAR_VEL  = 1.0                       # Max linear velocity (m/s)
 AUTONAV_MAX_ANGULAR_VEL = 1.0                       # Max angular velocity (rad/s)
 AUTONAV_PID_KP          = 0.8                       # PID proportional gain
@@ -86,6 +86,6 @@ CAM_FPS            = 25              # Frame rate (matches cam_demo/Depth_Align.
 CAM_WIDTH          = 640             # Frame width (pixels)
 CAM_HEIGHT         = 400             # Frame height (pixels)
 CAM_MJPEG_QUALITY  = 80              # MJPEG compression quality (1–100)
-CAM_DEFAULT_PLUGIN = "simple_color"  # Default processing plugin
+CAM_DEFAULT_PLUGIN = "path_cam"  # Default processing plugin
 CAM_ENABLE_STEREO     = True         # Enable stereo depth (requires Left/Right/StereoDepth nodes)
 CAM_ENABLE_DISPARITY  = False         # Enable raw disparity stream alongside depth (adds load; keep False unless debugging)
