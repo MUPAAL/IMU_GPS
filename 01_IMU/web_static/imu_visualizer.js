@@ -466,6 +466,13 @@ function connect() {
         rawHeadingDeg = wsHeadingRaw;
       }
 
+      // Reflect reference-heading mode in panel badge
+      const badge = document.getElementById('ref-active-badge');
+      if (badge && data.ref_heading_active !== undefined) {
+        badge.textContent    = data.ref_heading_active ? 'REF ACTIVE' : 'raw';
+        badge.style.color    = data.ref_heading_active ? 'var(--green)' : 'var(--text-muted)';
+      }
+
       // Update data panel
       updatePanel(data);
     }
@@ -523,6 +530,9 @@ document.getElementById('btn-clear-north').addEventListener('click', () => {
   northOffsetDeg = 0;
   document.getElementById('manual-heading').value = 0;
   sendNorthOffset(0);
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ clear_ref_heading: true }));
+  }
 });
 
 // Set Heading manually (user says "IMU is currently pointing at X degrees")
@@ -530,4 +540,7 @@ document.getElementById('btn-set-heading').addEventListener('click', () => {
   const userDeg = parseFloat(document.getElementById('manual-heading').value) || 0;
   northOffsetDeg = (rawHeadingDeg - userDeg + 360) % 360;
   sendNorthOffset(northOffsetDeg);
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ set_ref_heading: userDeg }));
+  }
 });

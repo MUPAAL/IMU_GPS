@@ -47,6 +47,11 @@ except ImportError:
 _override_heading: float | None = None
 _accuracy_threshold: float = 2.0
 
+# Reference-heading state: user sets a known bearing; delta from game_rot tracks changes.
+_ref_bearing: float | None = None      # user-declared bearing at reference moment
+_ref_heading_raw: float | None = None  # heading.raw from imu_bridge at that moment
+_latest_raw_heading: float = 0.0       # rolling snapshot for set_ref_heading capture
+
 _COMPASS = ["N","NNE","NE","ENE","E","ESE","SE","SSE",
             "S","SSW","SW","WSW","W","WNW","NW","NNW"]
 
@@ -72,6 +77,22 @@ def _apply_override(raw_json: str) -> str:
     except json.JSONDecodeError:
         return raw_json
 
+    global _latest_raw_heading
+    raw_heading = float(frame.get("heading", {}).get("raw", 0.0))
+    _latest_raw_heading = raw_heading
+
+    # ── Reference-heading mode (priority over static override) ─────────────────
+    # User sets a known bearing once; heading.raw delta from imu_bridge tracks rotation.
+    if _ref_bearing is not None and _ref_heading_raw is not None:
+        delta = ((raw_heading - _ref_heading_raw + 180.0) % 360.0) - 180.0
+        hdeg = (_ref_bearing + delta) % 360.0
+        hdir = _COMPASS[int(round(hdeg / 22.5)) % 16]
+        frame["heading"] = {"raw": raw_heading, "deg": round(hdeg, 3), "dir": hdir}
+        frame["ref_heading_active"] = True
+        frame["override_active"] = False
+        return json.dumps(frame)
+
+    # ── Static override mode (activates when magnetometer accuracy is poor) ────
     acc = float(frame.get("rot", {}).get("acc", 3.0))
 
     if acc > _accuracy_threshold and _override_heading is not None:
@@ -86,6 +107,8 @@ def _apply_override(raw_json: str) -> str:
         frame["override_active"] = True
     else:
         frame["override_active"] = False
+
+    frame["ref_heading_active"] = False
 
     # ── OUTPUT ─────────────────────────────────────────────────────────────────
     # Modified (or pass-through) frame queued here for WS :8768 broadcast.
@@ -109,8 +132,8 @@ async def _upstream_loop(upstream_url: str, queue: asyncio.Queue) -> None:
 
 
 def _handle_browser_msg(raw: str) -> None:
-    """Process set_heading_override / clear_heading_override from the browser."""
-    global _override_heading
+    """Process heading control messages from the browser."""
+    global _override_heading, _ref_bearing, _ref_heading_raw
     try:
         msg = json.loads(raw)
     except json.JSONDecodeError:
@@ -122,6 +145,15 @@ def _handle_browser_msg(raw: str) -> None:
             pass
     elif "clear_heading_override" in msg:
         _override_heading = None
+    elif "set_ref_heading" in msg:
+        try:
+            _ref_bearing = float(msg["set_ref_heading"]) % 360.0
+            _ref_heading_raw = _latest_raw_heading
+        except (ValueError, TypeError):
+            pass
+    elif "clear_ref_heading" in msg:
+        _ref_bearing = None
+        _ref_heading_raw = None
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -166,7 +198,7 @@ if __name__ == "__main__":
             upstream_url=args.upstream,
             http_port=args.ws_port,
             ws_port=args.ws_port + 1,
-            static_dir=Path(__file__).parent / "web_static_override",
+            static_dir=Path(__file__).parent / "web_static",
         ))
     except KeyboardInterrupt:
         pass
