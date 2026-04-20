@@ -345,6 +345,7 @@ function updatePanel(data) {
   setText('rot_qj', fmt(rot.qj));
   setText('rot_qk', fmt(rot.qk));
   setText('rot_qr', fmt(rot.qr));
+  setText('rot_acc', rot.acc !== undefined ? fmt(rot.acc, 2) + ' m/s²' : '–');
   const accEl = document.getElementById('rot_acc');
   if (accEl) {
     const a = rot.acc;
