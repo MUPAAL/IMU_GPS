@@ -13,6 +13,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 // HTTP server is on :8765, WebSocket is on :8766 (ws_port + 1)
 const WS_URL = `ws://${window.location.hostname}:${Number(window.location.port || 8765) + 1}`;
 
+//heading override HTTP server is on :8767 (ws_port + 2), WebSocket is on :8768 (ws_port + 3)
+const WS_HEADING_OVERRIDE_URL = `ws://${window.location.hostname}:${Number(window.location.port || 8765) + 2}`;
+
 // ========== Scene setup ==========
 const container = document.getElementById('canvas-container');
 
@@ -422,6 +425,7 @@ let reconnectTimer = null;
 function connect() {
   if (ws) return;
   ws = new WebSocket(WS_URL);
+  //ws = new WebSocket(WS_HEADING_OVERRIDE_URL);
 
   ws.onopen = () => {
     console.log('[WS] Connected to', WS_URL);
@@ -472,6 +476,19 @@ function connect() {
       if (badge && data.ref_heading_active !== undefined) {
         badge.textContent    = data.ref_heading_active ? 'REF ACTIVE' : 'raw';
         badge.style.color    = data.ref_heading_active ? 'var(--green)' : 'var(--text-muted)';
+      }
+
+      // Apply visual feedback for heading override
+      if (data.override_active !== undefined) {
+        if (data.override_active) {
+          // Override is active: change box color to indicate manual override
+          boxMat.color.setHex(0xff6633);  // Orange-red for override
+          boxMat.emissive.setHex(0x662211);  // Darker emissive
+        } else {
+          // Override is inactive: revert to normal color
+          boxMat.color.setHex(0x1a4a6e);  // Original blue
+          boxMat.emissive.setHex(0x0a1a2e);  // Original emissive
+        }
       }
 
       // Update data panel
@@ -545,3 +562,28 @@ document.getElementById('btn-set-heading').addEventListener('click', () => {
     ws.send(JSON.stringify({ set_ref_heading: userDeg }));
   }
 });
+
+// Set Override Heading manually
+document.getElementById('btn-set-override-heading').addEventListener('click', () => {
+  const overrideDeg = parseFloat(document.getElementById('override-heading').value) || 0;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ set_heading_override: overrideDeg }));
+    console.log(`[WS] Sent set_heading_override: ${overrideDeg}`);
+  } else {
+    console.warn('WebSocket not connected; cannot set override heading.');
+  }
+});
+
+// Add near other buttons (e.g., after btnPause)
+const btnToggleOverride = document.createElement('button');
+btnToggleOverride.id = 'btn-toggle-override';
+btnToggleOverride.textContent = 'Toggle Override Mode';
+btnToggleOverride.addEventListener('click', () => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    // Toggle based on current state (assuming a global or local flag; adjust as needed)
+    const isEnabled = btnToggleOverride.classList.contains('active');  // Or track with a variable
+    ws.send(JSON.stringify({ toggle_override_mode: !isEnabled }));
+    btnToggleOverride.classList.toggle('active', !isEnabled);
+  }
+});
+document.getElementById('toolbar').appendChild(btnToggleOverride);  // Assuming a toolbar div

@@ -45,7 +45,7 @@ except ImportError:
 
 # ── Mutable state (single async thread — no lock needed) ─────────────────────
 _override_heading: float | None = None
-_accuracy_threshold: float = 2.0
+_accuracy_threshold: float = 1.0
 
 # Reference-heading state: user sets a known bearing; delta from game_rot tracks changes.
 _ref_bearing: float | None = None      # user-declared bearing at reference moment

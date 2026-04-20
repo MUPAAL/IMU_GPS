@@ -27,6 +27,13 @@
       <button id="btn-set-heading" title="Set current IMU direction to this angle">
         Set Heading
       </button>
+      <!-- New: Override heading input and button -->
+      <input type="number" id="override-heading" min="0" max="359" step="1"
+             value="0" title="Override heading in degrees (0=N, 90=E)" />
+      <span class="unit">°</span>
+      <button id="btn-set-override-heading" title="Manually overwrite heading (requires override mode enabled)">
+        Set Override Heading
+      </button>
     </div>
     <button id="btn-clear-north" title="Remove north calibration offset">
       Clear North

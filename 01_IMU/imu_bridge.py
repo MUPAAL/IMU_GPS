@@ -59,6 +59,17 @@ def _setup_logger() -> logging.Logger:
 logger = _setup_logger()
 
 
+# Add these globals for heading override functionality
+_override_heading: float | None = None
+_accuracy_threshold: float = 2.0
+_ref_bearing: float | None = None
+_ref_heading_raw: float | None = None
+_latest_raw_heading: float = 0.0
+_override_enabled: bool = False  # Controls whether overrides are applied in the pipeline
+
+_COMPASS = ["N","NNE","NE","ENE","E","ESE","SE","SSE",
+            "S","SSW","SW","WSW","W","WNW","NW","NNW"]
+
 # ═════════════════════════════════════════════════════════════════════════════
 # BLOCK 1 — DATA MODEL
 # ═════════════════════════════════════════════════════════════════════════════
@@ -182,6 +193,8 @@ class IMUPipeline:
         frame = self._enrich_euler(frame)
         frame = self._enrich_heading(frame)
         frame = self._enrich_hz(frame)
+        if _override_enabled:  # Now defined
+            frame = self._enrich_override(frame)
         return self._serialize(frame)
 
     # ── Pipeline stages (private) ─────────────────────────────────────────────
@@ -369,6 +382,23 @@ class IMUPipeline:
         frame.heading_raw = round(raw_heading, 3)
         frame.heading = round(corrected_heading, 3)
         frame.heading_dir = self._heading_to_direction(corrected_heading)
+        return frame
+
+    def _enrich_override(self, frame: IMUFrame) -> IMUFrame:
+        """Stage 4: apply heading override when enabled."""
+        global _latest_raw_heading
+        raw_heading = float(frame.heading_raw or 0.0)
+        _latest_raw_heading = raw_heading
+
+        # Apply override if heading is set (no accuracy checks, no clamping)
+        if _override_heading is not None:
+            frame.heading = _override_heading
+            frame.heading_dir = self._heading_to_direction(_override_heading)
+            frame.yaw = _override_heading
+            frame.extra["override_active"] = True
+        else:
+            frame.extra["override_active"] = False
+        
         return frame
 
     def _serialize(self, frame: IMUFrame) -> str:
@@ -647,23 +677,33 @@ class IMUBridge:
 
     def _handle_client_message(self, raw: str) -> None:
         """Parse and apply JSON control messages sent from the browser."""
+        global _override_heading, _ref_bearing, _ref_heading_raw, _override_enabled
         try:
-            # ── INPUT ──────────────────────────────────────────────────────────
-            # north_offset_deg control messages arrive here from the browser.
-            # If the north offset control doesn't work, start debugging here.
             msg = json.loads(raw)
-            # ───────────────────────────────────────────────────────────────────
-        except json.JSONDecodeError as exc:
-            logger.warning(f"Invalid JSON from browser client: {exc} | raw: {raw[:80]}")
+        except json.JSONDecodeError:
+            logger.warning(f"JSON decode error in message: {raw}")
             return
-        if "set_north_offset" in msg:
-            if self._pipeline is None:
-                logger.warning("Pipeline not ready; ignoring set_north_offset.")
-                return
-            try:
-                self._pipeline.north_offset_deg = float(msg["set_north_offset"])
-            except (ValueError, TypeError) as exc:
-                logger.warning(f"Invalid set_north_offset value: {exc}")
+
+        logger.info(f"[Message] Received: {msg}")
+
+        if "set_heading_override" in msg:
+            _override_heading = float(msg["set_heading_override"])
+            logger.info(f"[Override] Heading set to {_override_heading}° (enabled={_override_enabled})")
+        elif "clear_heading_override" in msg:
+            _override_heading = None
+            logger.info("[Override] Heading override cleared")
+        elif "set_ref_heading" in msg:
+            _ref_bearing = float(msg["set_ref_heading"])
+            _ref_heading_raw = _latest_raw_heading
+            logger.info(f"[RefHeading] Set to {_ref_bearing}° from raw {_ref_heading_raw}°")
+        elif "clear_ref_heading" in msg:
+            _ref_bearing = None
+            _ref_heading_raw = None
+            logger.info("[RefHeading] Cleared")
+        elif "toggle_override_mode" in msg:
+            _override_enabled = bool(msg["toggle_override_mode"])
+            logger.info(f"[OverrideMode] {'ENABLED' if _override_enabled else 'DISABLED'}")
+        # ...existing code...
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
