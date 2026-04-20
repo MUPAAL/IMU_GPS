@@ -2,9 +2,10 @@
 heading_override.py — IMU heading override filter.
 
 Sits between imu_bridge.py (WS :8766) and downstream consumers.
-When rot.acc < threshold (default 2.0), replaces heading.{raw,deg,dir}
+When rot.acc > threshold (default 2.0 rad, ~115° error), replaces heading.{raw,deg,dir}
 and euler.yaw with a browser-supplied value, then clamps rot.acc to the
 threshold so downstream consumers treat the frame as valid.
+rot.acc is in radians (lower = better); π (~3.14) means fully uncalibrated.
 
 Data flow:
     imu_bridge WS :8766
@@ -58,8 +59,9 @@ def _apply_override(raw_json: str) -> str:
     """
     CORE — Apply heading override to one IMU frame from imu_bridge.
 
-    When rot.acc < _accuracy_threshold and an override heading is set,
+    When rot.acc > _accuracy_threshold and an override heading is set,
     replaces heading and euler.yaw fields and clamps acc to the threshold.
+    rot.acc is in radians (lower = better); threshold default is 2.0 rad (~115°).
     Passes the frame through unchanged otherwise.
     """
     try:
@@ -72,7 +74,7 @@ def _apply_override(raw_json: str) -> str:
 
     acc = float(frame.get("rot", {}).get("acc", 3.0))
 
-    if acc < _accuracy_threshold and _override_heading is not None:
+    if acc > _accuracy_threshold and _override_heading is not None:
         hdeg = _override_heading % 360.0
         hdir = _COMPASS[int(round(hdeg / 22.5)) % 16]
 

@@ -349,7 +349,7 @@ function updatePanel(data) {
   if (accEl) {
     const a = rot.acc;
     accEl.textContent = a !== undefined ? fmt(a, 2) : '–';
-    accEl.style.color = a === undefined ? '' : a >= 3 ? 'var(--green)' : a >= 2 ? 'var(--yellow)' : 'var(--red)';
+    accEl.style.color = a === undefined ? '' : a <= 1.0 ? 'var(--green)' : a <= 2.0 ? 'var(--yellow)' : 'var(--red)';
   }
 
   // Euler angles (computed by Python)
