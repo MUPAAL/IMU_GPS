@@ -54,13 +54,13 @@ imu_bridge WS :8766 → _upstream_loop() → _apply_override() → asyncio.Queue
 ├── bno085_esp32c3/
 │   └── bno085_esp32c3.ino   # ESP32-C3 Arduino firmware (SPI → UART, 50 Hz compact JSON)
 ├── imu_bridge.py            # Serial → WebSocket bridge (OOP + Pipeline)
-├── heading_override.py      # ★ Middleware filter — overrides heading when acc < threshold
+├── heading_override.py      # Middleware filter — intercepts :8766, applies heading override when acc > threshold, broadcasts :8768
 ├── listen_imu_websocket.py  # Debug WS client (prints tabular sensor data)
 ├── requirements.txt
-├── web_static/
-    ├── index.html
-    ├── imu_visualizer.js    # Three.js 3D viewer + compass HUD + sensor data cards
-    └── style.css
+└── web_static/
+    ├── index.html           # 3D visualizer + compass + sensor data
+    ├── imu_visualizer.js    # Three.js viewer; displays rot.acc with color-coded accuracy
+    └── style.css            # Dark theme (GitHub colors)
 ```
 
 ## Configuration
@@ -127,7 +127,7 @@ python imu_bridge.py --port /dev/ttyACM0 --baud 921600 --ws-port 8765 --north-of
 
 ### WebSocket Message Format
 
-Outbound JSON (one frame per message, ~50 Hz):
+**Outbound JSON from `imu_bridge.py` (one frame per message, ~50 Hz):**
 
 ```json
 {
@@ -147,10 +147,28 @@ Outbound JSON (one frame per message, ~50 Hz):
 }
 ```
 
-Inbound JSON (browser → bridge):
+**Outbound JSON from `heading_override.py` (WS :8768):**  
+Same as above, plus:
+```json
+{
+  "override_active": false,
+  "ref_heading_active": false
+}
+```
+
+**Inbound JSON (browser → `imu_bridge.py` on WS :8766):**
 
 ```json
 { "set_north_offset": 12.5 }
+```
+
+**Inbound JSON (browser → `heading_override.py` on WS :8768):**
+
+```json
+{ "set_heading_override": 182.5 }
+{ "clear_heading_override": true }
+{ "set_ref_heading": 180.0 }
+{ "clear_ref_heading": true }
 ```
 
 ## Firmware — `bno085_esp32c3.ino`
@@ -217,11 +235,11 @@ Long-press the BOOT button (GPIO9) for 3 seconds. The firmware calls `sh2_saveDc
 
 ## Heading Override — `heading_override.py`
 
-An optional middleware filter that sits between `imu_bridge.py` and downstream consumers. When `rot.acc` drops below the accuracy threshold (default `2.0`), it replaces the heading fields with a user-supplied value from the browser and clamps `rot.acc` to the threshold so downstream systems receive a consistent frame.
+An optional middleware filter that sits between `imu_bridge.py` and downstream consumers. When the heading accuracy `rot.acc` exceeds the threshold (default `2.0` rad, ~115° error), it replaces the heading fields with a user-supplied value from the browser and clamps `rot.acc` to the threshold. This keeps downstream systems stable when the magnetometer is poorly calibrated.
 
 ### When to use
 
-Run `heading_override.py` when the BNO085 magnetometer is poorly calibrated (acc < 2) and you have an external reference heading to inject — e.g. from a compass, GPS course-over-ground, or known landmark bearing.
+Run `heading_override.py` when the BNO085 magnetometer is poorly calibrated (acc > 2.0 rad) and you have an external reference heading to inject — e.g. from a compass, GPS course-over-ground, or known landmark bearing. The override activates automatically when accuracy falls below the threshold.
 
 ### Usage
 
@@ -237,11 +255,19 @@ python heading_override.py --upstream ws://localhost:8766 --ws-port 8767 --thres
 |----------|---------|-------------|
 | `--upstream` | `ws://localhost:8766` | WebSocket URL of `imu_bridge` |
 | `--ws-port` | `8767` | HTTP port for control UI; WebSocket binds to `ws-port + 1` |
-| `--threshold` | `2.0` | `rot.acc` value below which override activates (0–3) |
+| `--threshold` | `2.0` | `rot.acc` threshold in radians (rad); override activates when acc > threshold |
 
-Open `http://localhost:8767` to set or clear the override heading from the browser.
+### Control UI — `web_static_override/index.html` (⚠ TODO)
 
-> **Note:** `web_static_override/index.html` (the control UI) is not yet implemented. The Python bridge and WebSocket protocol are complete; the frontend is pending.
+Open `http://localhost:8767` to control the override from the browser (when UI is implemented).
+
+**Expected features** (not yet written):
+- Heading number input + Set/Clear buttons
+- Live display of `rot.acc`, current heading, and direction
+- `override_active` status badge
+- Dark theme matching `web_static/style.css`
+
+**Protocol**: WS `:8768` receives `{"set_heading_override": <deg>}` and `{"clear_heading_override": true}` messages, and broadcasts frames with `"override_active": true/false` and `"ref_heading_active": true/false` fields.
 
 ### What it modifies (when active)
 
@@ -265,16 +291,15 @@ All other fields (quaternion, gyro, accel, etc.) pass through unchanged.
 
 ### Downstream consumers
 
-When `heading_override.py` is running, point downstream bridges at WS :8768 instead of :8766.
-
-**`config.py` currently points these at `:8766` (unchanged):**
+When `heading_override.py` is running and you want downstream bridges to use the override, update `config.py`:
 
 ```python
-NAV_IMU_WS     = "ws://localhost:8766"   # 03_Nav  — update to :8768 to use override
-AUTONAV_IMU_WS = "ws://localhost:8766"   # 05_AutoNav — same
+NAV_IMU_WS     = "ws://localhost:8768"   # 03_Nav — uses override
+AUTONAV_IMU_WS = "ws://localhost:8768"   # 05_AutoNav — uses override
+RECORDER_IMU_WS = "ws://localhost:8768"  # 07_Recorder — uses override (if applicable)
 ```
 
-Update those two values in `config.py` and restart the affected bridges to route through `heading_override.py`.
+Restart affected bridges after updating. If not specified elsewhere, default is `:8766` (skip override).
 
 ### Implementation note
 
@@ -304,11 +329,11 @@ Roll (°) | Pitch (°) | Yaw (°)  | Heading (°) | Direction | Hz   | Quaternio
 - North-offset calibration slider (writes `set_north_offset` back to bridge)
 - Lock-yaw mode and top-north view toggle
 - Sensor data cards: roll/pitch/yaw, heading, Hz, quaternion, accel, lin\_accel, gravity, gyro, mag, cal, steps
-- **`rot.acc` accuracy display** in the Rotation Vector card, color-coded: green ≥ 3 · yellow = 2 · red < 2 (red = override will activate)
+- **`rot.acc` accuracy display** in the Rotation Vector card, color-coded by heading accuracy (radians): green ≤ 1.0 rad (good) · yellow 1.0–2.0 rad (moderate) · red > 2.0 rad (poor; override activates when > 2.0)
 
 ## Ports
 
 | Script | HTTP | WebSocket | Notes |
 |--------|------|-----------|-------|
 | `imu_bridge.py` | 8765 | 8766 | source — always running |
-| `heading_override.py` | 8767 | 8768 | optional middleware; re-broadcasts :8766 with heading injection |
+| `heading_override.py` | 8767 | 8768 | optional middleware; intercepts :8766, applies heading override when `rot.acc > threshold`, re-broadcasts on :8768 |
