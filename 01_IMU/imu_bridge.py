@@ -58,18 +58,6 @@ def _setup_logger() -> logging.Logger:
 
 logger = _setup_logger()
 
-
-# Add these globals for heading override functionality
-_override_heading: float | None = None
-_accuracy_threshold: float = 2.0
-_ref_bearing: float | None = None
-_ref_heading_raw: float | None = None
-_latest_raw_heading: float = 0.0
-_override_enabled: bool = False  # Controls whether overrides are applied in the pipeline
-
-_COMPASS = ["N","NNE","NE","ENE","E","ESE","SE","SSE",
-            "S","SSW","SW","WSW","W","WNW","NW","NNW"]
-
 # ═════════════════════════════════════════════════════════════════════════════
 # BLOCK 1 — DATA MODEL
 # ═════════════════════════════════════════════════════════════════════════════
@@ -187,13 +175,16 @@ class IMUPipeline:
         serialized JSON string ready for WebSocketServer to broadcast (OUTPUT).
         Returns None if the line should be skipped (bad JSON, missing fields, etc.).
         """
+        # Lazy import to avoid circular dependency with heading_override
+        from heading_override import get_override_enabled
+        
         frame = self._parse(raw_line)
         if frame is None:
             return None
         frame = self._enrich_euler(frame)
         frame = self._enrich_heading(frame)
         frame = self._enrich_hz(frame)
-        if _override_enabled:  # Now defined
+        if get_override_enabled():  # Call function from heading_override module
             frame = self._enrich_override(frame)
         return self._serialize(frame)
 
@@ -385,17 +376,23 @@ class IMUPipeline:
         return frame
 
     def _enrich_override(self, frame: IMUFrame) -> IMUFrame:
-        """Stage 4: apply heading override when enabled."""
-        global _latest_raw_heading
-        raw_heading = float(frame.heading_raw or 0.0)
-        _latest_raw_heading = raw_heading
+        """Stage 4: pass through override state flag to frontend.
+        
+        The override heading comes from heading_override module.
+        We just mark that an override is active and pass the value to frontend.
+        """
+        # Lazy import to avoid circular dependency with heading_override
+        from heading_override import get_override_heading
+        
+        override_heading = get_override_heading()
 
-        # Apply override if heading is set (no accuracy checks, no clamping)
-        if _override_heading is not None:
-            frame.heading = _override_heading
-            frame.heading_dir = self._heading_to_direction(_override_heading)
-            frame.yaw = _override_heading
+        # Apply override if heading is set
+        if override_heading is not None:
+            frame.heading = override_heading
+            frame.heading_dir = self._heading_to_direction(override_heading)
+            frame.yaw = override_heading
             frame.extra["override_active"] = True
+            frame.extra["override_heading"] = override_heading
         else:
             frame.extra["override_active"] = False
         
@@ -676,8 +673,13 @@ class IMUBridge:
         await ws_server.serve()
 
     def _handle_client_message(self, raw: str) -> None:
-        """Parse and apply JSON control messages sent from the browser."""
-        global _override_heading, _ref_bearing, _ref_heading_raw, _override_enabled
+        """Parse and apply JSON control messages sent from the browser.
+        
+        Delegates to heading_override module for state management.
+        """
+        # Lazy import to avoid circular dependency with heading_override
+        from heading_override import handle_message, get_override_heading, get_override_enabled
+        
         try:
             msg = json.loads(raw)
         except json.JSONDecodeError:
@@ -686,24 +688,13 @@ class IMUBridge:
 
         logger.info(f"[Message] Received: {msg}")
 
-        if "set_heading_override" in msg:
-            _override_heading = float(msg["set_heading_override"])
-            logger.info(f"[Override] Heading set to {_override_heading}° (enabled={_override_enabled})")
-        elif "clear_heading_override" in msg:
-            _override_heading = None
-            logger.info("[Override] Heading override cleared")
-        elif "set_ref_heading" in msg:
-            _ref_bearing = float(msg["set_ref_heading"])
-            _ref_heading_raw = _latest_raw_heading
-            logger.info(f"[RefHeading] Set to {_ref_bearing}° from raw {_ref_heading_raw}°")
-        elif "clear_ref_heading" in msg:
-            _ref_bearing = None
-            _ref_heading_raw = None
-            logger.info("[RefHeading] Cleared")
-        elif "toggle_override_mode" in msg:
-            _override_enabled = bool(msg["toggle_override_mode"])
-            logger.info(f"[OverrideMode] {'ENABLED' if _override_enabled else 'DISABLED'}")
-        # ...existing code...
+        # Delegate to heading_override module for processing
+        handle_message(raw)
+        
+        # Log the result for debugging
+        override_heading = get_override_heading()
+        if override_heading is not None:
+            logger.info(f"[Override] Heading set to {override_heading}° (enabled={get_override_enabled()})")
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────

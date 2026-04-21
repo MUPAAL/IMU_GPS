@@ -173,6 +173,8 @@ let isPaused       = false; // whether to freeze live data updates
 let lockYawOnly    = false; // whether to show yaw only (strip pitch/roll)
 let topNorthView   = false; // top-down camera + north-up orientation
 let lockYawBeforeTop = false;
+let overrideActive = false; // track if heading override is active
+let overrideHeading = null; // the override heading value in degrees
 
 // ========== North offset sync helpers ==========
 // Server convention: corrected = raw + server_offset  (add)
@@ -286,7 +288,20 @@ function animate() {
   requestAnimationFrame(animate);
   // Smooth rotation
   currentQuat.slerp(targetQuat, SLERP_SPEED);
-  const calibratedQuat = getCalibratedQuat(currentQuat);
+  let calibratedQuat = getCalibratedQuat(currentQuat);
+
+  // Apply heading override if active: replace yaw component with override value
+  if (overrideActive && overrideHeading !== null) {
+    // Extract roll and pitch from calibrated quaternion (keep them), replace yaw with override
+    const euler = new THREE.Euler().setFromQuaternion(calibratedQuat, 'YXZ');
+    const rollRad = euler.x;
+    const pitchRad = euler.z;
+    const overrideYawRad = THREE.MathUtils.degToRad(overrideHeading);
+    
+    // Reconstruct quaternion with override yaw
+    const overrideEuler = new THREE.Euler(rollRad, overrideYawRad, pitchRad, 'YXZ');
+    calibratedQuat = new THREE.Quaternion().setFromEuler(overrideEuler);
+  }
 
   // Lock Yaw: strip pitch & roll from imuGroup, keep only yaw
   if (lockYawOnly) {
@@ -310,9 +325,12 @@ function animate() {
   }
   // Raw heading: 0° = +X world axis, increases clockwise from above
   rawHeadingDeg = ((Math.atan2(chipXRaw.z, chipXRaw.x) * 180 / Math.PI) + 360) % 360;
+  const fallbackHeadingDeg = (chipXCal.lengthSq() > 1e-4)
+    ? ((Math.atan2(chipXCal.z, chipXCal.x) * 180 / Math.PI) + 360) % 360
+    : rawHeadingDeg;
   const displayHeadingDeg = (typeof wsHeadingDeg === 'number')
     ? wsHeadingDeg
-    : (rawHeadingDeg - northOffsetDeg + 360) % 360;
+    : fallbackHeadingDeg;
   updateHeadingDisplay(displayHeadingDeg, wsHeadingDir);
   drawCompass(displayHeadingDeg);
 
@@ -462,6 +480,8 @@ function connect() {
       // Sync heading from server (source of truth for display)
       if (data.heading?.deg !== undefined) {
         wsHeadingDeg = Number(data.heading.deg);
+      } else {
+        wsHeadingDeg = null;
       }
       if (data.heading?.dir !== undefined) {
         wsHeadingDir = String(data.heading.dir);
@@ -480,6 +500,7 @@ function connect() {
 
       // Apply visual feedback for heading override
       if (data.override_active !== undefined) {
+        overrideActive = data.override_active;
         if (data.override_active) {
           // Override is active: change box color to indicate manual override
           boxMat.color.setHex(0xff6633);  // Orange-red for override
@@ -489,6 +510,12 @@ function connect() {
           boxMat.color.setHex(0x1a4a6e);  // Original blue
           boxMat.emissive.setHex(0x0a1a2e);  // Original emissive
         }
+      }
+
+      // Capture override heading value from backend
+      if (data.override_heading !== undefined) {
+        overrideHeading = Number(data.override_heading);
+        console.log('[Override] Heading override set to', overrideHeading, '°');
       }
 
       // Update data panel
@@ -580,10 +607,12 @@ btnToggleOverride.id = 'btn-toggle-override';
 btnToggleOverride.textContent = 'Toggle Override Mode';
 btnToggleOverride.addEventListener('click', () => {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    // Toggle based on current state (assuming a global or local flag; adjust as needed)
-    const isEnabled = btnToggleOverride.classList.contains('active');  // Or track with a variable
+    const isEnabled = btnToggleOverride.classList.contains('active');
     ws.send(JSON.stringify({ toggle_override_mode: !isEnabled }));
     btnToggleOverride.classList.toggle('active', !isEnabled);
   }
 });
-document.getElementById('toolbar').appendChild(btnToggleOverride);  // Assuming a toolbar div
+const toolbarEl = document.getElementById('toolbar') || document.querySelector('.toolbar');
+if (toolbarEl) {
+  toolbarEl.appendChild(btnToggleOverride);
+}

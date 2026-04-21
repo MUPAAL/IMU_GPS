@@ -33,10 +33,7 @@ from pathlib import Path
 
 import websockets
 
-# ── Reuse server infrastructure from imu_bridge ───────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
-from imu_bridge import HttpFileServer, WebSocketServer
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 try:
     import config as _cfg
@@ -54,6 +51,50 @@ _latest_raw_heading: float = 0.0       # rolling snapshot for set_ref_heading ca
 
 _COMPASS = ["N","NNE","NE","ENE","E","ESE","SE","SSE",
             "S","SSW","SW","WSW","W","WNW","NW","NNW"]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PUBLIC API — for imu_bridge.py and other consumers
+# ═════════════════════════════════════════════════════════════════════════════
+
+def get_override_heading() -> float | None:
+    """Return the current override heading value, or None if not set."""
+    return _override_heading
+
+def get_override_enabled() -> bool:
+    """Return whether override mode is enabled."""
+    return _override_heading is not None
+
+def handle_message(raw: str) -> None:
+    """PUBLIC — Process heading control messages from browser/client.
+    
+    Handles:
+      - {"set_heading_override": <deg>}
+      - {"clear_heading_override": true}
+      - {"set_ref_heading": <deg>}
+      - {"clear_ref_heading": true}
+    """
+    global _override_heading, _ref_bearing, _ref_heading_raw
+    try:
+        msg = json.loads(raw)
+    except json.JSONDecodeError:
+        return
+    if "set_heading_override" in msg:
+        try:
+            _override_heading = float(msg["set_heading_override"])
+        except (ValueError, TypeError):
+            pass
+    elif "clear_heading_override" in msg:
+        _override_heading = None
+    elif "set_ref_heading" in msg:
+        try:
+            _ref_bearing = float(msg["set_ref_heading"]) % 360.0
+            _ref_heading_raw = _latest_raw_heading
+        except (ValueError, TypeError):
+            pass
+    elif "clear_ref_heading" in msg:
+        _ref_bearing = None
+        _ref_heading_raw = None
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -132,28 +173,8 @@ async def _upstream_loop(upstream_url: str, queue: asyncio.Queue) -> None:
 
 
 def _handle_browser_msg(raw: str) -> None:
-    """Process heading control messages from the browser."""
-    global _override_heading, _ref_bearing, _ref_heading_raw
-    try:
-        msg = json.loads(raw)
-    except json.JSONDecodeError:
-        return
-    if "set_heading_override" in msg:
-        try:
-            _override_heading = float(msg["set_heading_override"])
-        except (ValueError, TypeError):
-            pass
-    elif "clear_heading_override" in msg:
-        _override_heading = None
-    elif "set_ref_heading" in msg:
-        try:
-            _ref_bearing = float(msg["set_ref_heading"]) % 360.0
-            _ref_heading_raw = _latest_raw_heading
-        except (ValueError, TypeError):
-            pass
-    elif "clear_ref_heading" in msg:
-        _ref_bearing = None
-        _ref_heading_raw = None
+    """Process heading control messages from the browser (delegates to public API)."""
+    handle_message(raw)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -161,6 +182,9 @@ def _handle_browser_msg(raw: str) -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 
 async def _main(upstream_url: str, http_port: int, ws_port: int, static_dir: Path) -> None:
+    # Lazy import to avoid circular dependency with imu_bridge
+    from imu_bridge import HttpFileServer, WebSocketServer
+    
     queue: asyncio.Queue = asyncio.Queue(maxsize=200)
     asyncio.create_task(_upstream_loop(upstream_url, queue))
 
