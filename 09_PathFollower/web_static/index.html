@@ -1,136 +1,120 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PathFollower — Heading-based Control</title>
-    <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>PathFollower Control</title>
+<link rel="stylesheet" href="/style.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>🤖 PathFollower</h1>
-            <p>Heading-based path following with joystick control</p>
-        </header>
 
-        <!-- Status Panel -->
-        <section class="panel status-panel">
-            <h2>System Status</h2>
-            <div class="status-grid">
-                <div class="status-item">
-                    <label>Mode:</label>
-                    <span id="status-mode">—</span>
-                </div>
-                <div class="status-item">
-                    <label>Watchdog:</label>
-                    <span id="status-watchdog" class="watchdog-ok">✓ Active</span>
-                </div>
-                <div class="status-item">
-                    <label>Linear Vel:</label>
-                    <span id="status-linear">0.00</span> m/s
-                </div>
-                <div class="status-item">
-                    <label>Angular Vel:</label>
-                    <span id="status-angular">0.00</span> rad/s
-                </div>
-            </div>
-        </section>
+<div id="app">
 
-        <!-- IMU Panel -->
-        <section class="panel imu-panel">
-            <h2>IMU Orientation</h2>
-            <div class="imu-grid">
-                <div class="imu-item">
-                    <label>Heading:</label>
-                    <div class="heading-display">
-                        <span id="imu-heading">—</span>°
-                    </div>
-                    <span id="imu-heading-dir" class="heading-dir">—</span>
-                </div>
-                <div class="imu-item">
-                    <label>Roll:</label>
-                    <span id="imu-roll">—</span>°
-                </div>
-                <div class="imu-item">
-                    <label>Pitch:</label>
-                    <span id="imu-pitch">—</span>°
-                </div>
-                <div class="imu-item">
-                    <label>Yaw:</label>
-                    <span id="imu-yaw">—</span>°
-                </div>
-                <div class="imu-item">
-                    <label>Frame Rate:</label>
-                    <span id="imu-hz">0</span> Hz
-                </div>
-            </div>
-        </section>
+  <!-- ── Fullscreen joystick (base layer z-index:0) ── -->
+  <div id="joystick-zone">
+    <span id="joystick-hint">TOUCH TO CONTROL</span>
+  </div>
 
-        <!-- RTK Panel -->
-        <section class="panel rtk-panel">
-            <h2>RTK Position</h2>
-            <div class="rtk-grid">
-                <div class="rtk-item">
-                    <label>Latitude:</label>
-                    <span id="rtk-lat">—</span>°
-                </div>
-                <div class="rtk-item">
-                    <label>Longitude:</label>
-                    <span id="rtk-lon">—</span>°
-                </div>
-                <div class="rtk-item">
-                    <label>Altitude:</label>
-                    <span id="rtk-alt">—</span> m
-                </div>
-                <div class="rtk-item">
-                    <label>Satellites:</label>
-                    <span id="rtk-sats">0</span>
-                </div>
-                <div class="rtk-item">
-                    <label>Fix Quality:</label>
-                    <span id="rtk-fix">No Fix</span>
-                </div>
-            </div>
-        </section>
+  <!-- Warning banner (below top bar, z-index:20) -->
+  <div id="warn-banner">⚠ WATCHDOG TIMEOUT — MOTORS STOPPED</div>
 
-        <!-- Control Panel -->
-        <section class="panel control-panel">
-            <h2>Control</h2>
+  <!-- ── Top bar ── -->
+  <div id="top-bar">
+    <span class="title">PATHFOLLOWER</span>
+    <span id="status-dot"></span>
+    <span id="status-text">OFFLINE</span>
+  </div>
 
-            <!-- Joystick Mode -->
-            <div class="control-mode">
-                <h3>Joystick Mode</h3>
-                <div class="joystick-container">
-                    <canvas id="joystick" width="300" height="300"></canvas>
-                </div>
-                <div class="joystick-values">
-                    <div>Linear: <span id="joy-linear">0.00</span> m/s</div>
-                    <div>Angular: <span id="joy-angular">0.00</span> rad/s</div>
-                </div>
-            </div>
-
-            <!-- Heading Follow Mode -->
-            <div class="control-mode">
-                <h3>Heading Follow Mode</h3>
-                <div class="heading-input-group">
-                    <label for="target-heading">Target Heading (°):</label>
-                    <input type="number" id="target-heading" min="0" max="360" step="1" value="0">
-                    <button id="btn-set-heading" class="btn btn-primary">Set Heading</button>
-                </div>
-                <div class="heading-feedback">
-                    <div>Target: <span id="heading-target">0</span>°</div>
-                    <div>Current: <span id="heading-current">—</span>°</div>
-                    <div>Error: <span id="heading-error">—</span>°</div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Footer -->
-        <footer>
-            <p>PathFollower • IMU + RTK Sensor Fusion • PID Heading Control</p>
-        </footer>
+  <!-- ── Top-left HUD: IMU + Compass ── -->
+  <div id="hud-left">
+    <div class="hud-panel-title">COMPASS</div>
+    <div id="compass-svg-wrap">
+      <svg id="compass-svg" viewBox="0 0 100 100">
+        <!-- Outer ring -->
+        <circle cx="50" cy="50" r="46" fill="none" stroke="#1e2d3d" stroke-width="2"/>
+        <!-- Cardinal ticks -->
+        <g stroke="#5a7080" stroke-width="1.5">
+          <line x1="50" y1="6"  x2="50" y2="14"/>
+          <line x1="94" y1="50" x2="86" y2="50"/>
+          <line x1="50" y1="94" x2="50" y2="86"/>
+          <line x1="6"  y1="50" x2="14" y2="50"/>
+        </g>
+        <!-- Cardinal labels -->
+        <text x="50" y="22" text-anchor="middle" fill="#00d4ff" font-size="10" font-family="Courier New">N</text>
+        <text x="50" y="84" text-anchor="middle" fill="#5a7080" font-size="9"  font-family="Courier New">S</text>
+        <text x="82" y="54" text-anchor="middle" fill="#5a7080" font-size="9"  font-family="Courier New">E</text>
+        <text x="18" y="54" text-anchor="middle" fill="#5a7080" font-size="9"  font-family="Courier New">W</text>
+        <!-- Needle group (rotated by JS) -->
+        <g id="compass-needle" transform="rotate(0,50,50)">
+          <polygon points="50,16 46,50 54,50" fill="#ff4060"/>
+          <polygon points="50,84 46,50 54,50" fill="#1e2d3d"/>
+        </g>
+        <!-- Center dot -->
+        <circle cx="50" cy="50" r="3" fill="#00d4ff"/>
+      </svg>
+      <div id="compass-bearing">---°</div>
+      <div id="compass-cardinal">--</div>
     </div>
 
-    <script src="visualizer.js"></script>
+    <div class="hud-panel-title" style="margin-top:8px;">HEADING CONTROL</div>
+    <div class="heading-control-group">
+      <input type="number" id="heading-input" min="0" max="359" step="1" value="0" title="Target heading in degrees (0=N, 90=E)">
+      <span class="unit">°</span>
+      <button id="btn-set-heading" title="Set robot heading target">Set</button>
+    </div>
+    <div class="heading-control-group" style="margin-top:3px;">
+      <button id="btn-lock-yaw" class="btn-toggle" title="Lock yaw / show current heading">Lock Yaw</button>
+    </div>
+
+    <div class="hud-panel-title" style="margin-top:8px;">ORIENTATION</div>
+    <div class="hud-value"><span class="hud-label">ROLL</span><span class="hud-num" id="roll-val">--</span></div>
+    <div class="hud-value"><span class="hud-label">PITCH</span><span class="hud-num" id="pitch-val">--</span></div>
+    <div class="hud-value"><span class="hud-label">YAW</span><span class="hud-num" id="yaw-val">--</span></div>
+
+    <div class="hud-panel-title" style="margin-top:8px;">STATUS</div>
+    <div class="hud-value"><span class="hud-label">MODE</span><span class="hud-num" id="mode-val">--</span></div>
+    <div class="hud-value"><span class="hud-label">LINEAR</span><span class="hud-num" id="linear-val">--</span></div>
+    <div class="hud-value"><span class="hud-label">ANGULAR</span><span class="hud-num" id="angular-val">--</span></div>
+  </div>
+
+  <!-- ── Top-right HUD: RTK GPS ── -->
+  <div id="hud-right">
+    <div id="rtk-header">
+      <span id="rtk-title">RTK GPS</span>
+      <span id="rtk-fix-badge">NO FIX</span>
+      <span id="rtk-live-dot" title="RTK OFFLINE"></span>
+    </div>
+    <div class="rtk-cell">
+      <span class="rtk-cell-label">LAT</span>
+      <span class="rtk-cell-val accent" id="rtk-lat">--</span>
+    </div>
+    <div class="rtk-cell">
+      <span class="rtk-cell-label">LON</span>
+      <span class="rtk-cell-val accent" id="rtk-lon">--</span>
+    </div>
+    <div class="rtk-cell">
+      <span class="rtk-cell-label">ALT (m)</span>
+      <span class="rtk-cell-val" id="rtk-alt">--</span>
+    </div>
+    <div id="rtk-sats-row">
+      <div class="rtk-cell">
+        <span class="rtk-cell-label">SATS</span>
+        <span class="rtk-cell-val" id="rtk-sats">--</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden Joy Data Element -->
+  <div id="joy-data-hidden">
+    <span id="joy-force"></span>
+    <span id="joy-linear"></span>
+    <span id="joy-angular"></span>
+    <span id="joy-dir"></span>
+  </div>
+
+</div>
+
+<script src="/nipplejs.min.js"></script>
+<script src="/visualizer.js"></script>
 </body>
 </html>

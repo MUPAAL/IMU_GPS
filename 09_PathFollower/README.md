@@ -95,51 +95,71 @@ Navigate to:
 http://localhost:8890
 ```
 
-You'll see:
-- **System Status** — Current mode, watchdog state, velocity outputs
-- **IMU Orientation** — Heading (with compass direction), roll, pitch, yaw, frame rate
-- **RTK Position** — Latitude, longitude, altitude, satellite count, fix quality
-- **Control Panel** — Virtual joystick, heading target input, and waypoint management (Pure Pursuit)
+**Layout** (fullscreen, matching 00_robot_side farm robot UI):
+- **Fullscreen Joystick Zone** — Touch or click to control; center-positioned virtual joystick
+- **Top Bar** — Title "PATHFOLLOWER" with green/red connection status dot
+- **Left HUD Panel** (top-left):
+  - **Compass** — Rotating needle showing current heading, cardinal direction (N/S/E/W/etc.)
+  - **Heading Control Box** — Input field for target heading (0–359°) + "Set" button + "Lock Yaw" toggle
+  - **Orientation** — Roll, pitch, yaw angles (degrees)
+  - **Status** — Current mode (JOYSTICK/HEADING/P2P), linear velocity, angular velocity
+- **Right HUD Panel** (top-right) — RTK GPS data:
+  - Latitude, longitude, altitude
+  - Satellite count
+  - Fix quality badge (NO FIX / GPS / RTK FIX / RTK FLOAT)
+- **Warning Banner** — Red alert "⚠ WATCHDOG TIMEOUT — MOTORS STOPPED" (appears only when timeout triggers)
 
 ## Operating the Controller
 
 ### Joystick Mode (Default)
-1. Move your mouse/finger on the joystick canvas
-2. Distance from center controls linear velocity (forward/backward)
-3. Angle controls angular velocity (left/right turn)
-4. Release to stop
+1. **Touch or click** in the center of the screen to activate the virtual joystick
+2. **Drag to control**:
+   - Upward (Y+) = forward linear velocity
+   - Downward (Y−) = backward linear velocity  
+   - Right (X+) = left turn (negative angular velocity)
+   - Left (X−) = right turn (positive angular velocity)
+3. **Release** to stop immediately (zeroes velocity)
 
-**Velocity Output**: Sent 20 times per second to Feather M4 whenever you interact with the joystick.
+**Velocity Output**: Sent at ~10 Hz (100 ms throttle) to Feather M4 during active joystick interaction. Joystick hint text ("TOUCH TO CONTROL") disappears while active, reappears on release.
 
 ### Point-to-Point (P2P) Heading Follow Mode
-1. Enter a target heading in degrees (0–359, where 0 = North)
-2. Click "Set Heading"
-3. The robot will autonomously maintain that bearing using IMU feedback
-4. Current and target heading displayed in real-time
-
-**How It Works**: Uses PID control on heading error (target - current heading) to compute angular velocity. Linear velocity can be set from last joystick input or fixed value.
-
-**When to Use**: Simple heading-based navigation when GPS is unavailable or for precise bearing control.
-
-### Pure Pursuit Waypoint Mode
-1. Prepare a waypoint list (CSV format: `lat,lon,tolerance_m,max_speed`)
-2. Upload waypoints via the web UI
-3. Robot automatically loads waypoints and displays current target
-4. Each waypoint reached triggers automatic advancement to next
+1. In the **Heading Control Box** (left panel, below compass), enter target heading (0–359°, where 0 = North)
+2. Click **"Set"** button (cyan)
+3. The robot will autonomously steer to and maintain that bearing using IMU feedback
+4. Compass needle continuously shows current heading; heading error updates in real-time
 
 **How It Works**: 
-- Projects robot position onto current path segment [previous → current waypoint]
-- Computes lookahead point 2.0 m ahead along the path
-- Steers toward lookahead point for smooth, natural trajectories
-- Decelerates as it approaches each waypoint
-- Seamlessly handles multi-waypoint paths without the robot oscillating
+- Uses PID control on heading error (target − current heading) to compute angular velocity
+- Linear velocity maintained from last joystick input (or zero if joystick never used)
+- Sends velocity commands at 20 Hz until you set a different heading or move the joystick
 
-**When to Use**: GPS-based autonomous navigation with smooth, efficient paths through multiple waypoints.
+**When to Use**: Simple bearing-based navigation when GPS is unavailable, or for precise heading control without waypoints.
+
+### Pure Pursuit Waypoint Mode
+**Status**: Backend implementation complete; **web UI waypoint upload not yet implemented**.
+
+The backend supports Pure Pursuit mode (smooth multi-waypoint path following), but currently waypoints can only be loaded programmatically via web_controller.py. Future enhancement: add waypoint CSV upload button to left HUD panel.
+
+**How It Works** (when waypoints are loaded):
+- Projects robot position onto current path segment [previous → current waypoint]
+- Computes lookahead point 2.0 m ahead along the path (configurable via `NAV_LOOKAHEAD_M`)
+- Steers toward lookahead point for smooth, natural trajectories (avoids oscillation)
+- Decelerates as it approaches each waypoint (smooth arrival)
+- Automatically advances to next waypoint when within tolerance
+
+**Fallback**: If Pure Pursuit encounters GPS loss or path projection error, automatically degrades to **P2P Mode** using last known bearing.
+
+**When to Use**: GPS-based autonomous navigation with smooth, efficient paths through multiple waypoints (once UI waypoint upload is implemented).
 
 ### Switching Modes
-- **Joystick** ↔ **P2P**: Move joystick or set heading target (modes switch automatically)
-- **Any mode** → **Pure Pursuit**: Upload waypoints (this mode is explicit)
-- **Pure Pursuit** → **P2P**: Stop Pure Pursuit mode or disconnect waypoints (fallback on GPS loss)
+Modes are **implicit** — determined by your last input:
+- **Joystick Mode** (default) — Touch joystick → switch to joystick control
+- **Heading Follow Mode** — Click "Set Heading" button → enter autonomous heading tracking (P2P)
+- **Pure Pursuit Mode** (future) — Upload waypoints → switch to GPS-based path following
+
+**Current Status Display**: Left HUD panel shows current **MODE** (JOYSTICK / HEADING / P2P)
+
+**Fallback**: If in Heading Follow or Pure Pursuit modes and you use the joystick, mode immediately switches back to Joystick Mode.
 
 ## Output and Logging
 
@@ -250,16 +270,17 @@ All outputs are clamped to safe ranges:
 - Confirm IMU and RTK are powered and connected
 
 ### P2P Heading Control Not Responding
-- Ensure IMU is connected and sensor data arrives (check IMU panel in web UI)
+- Ensure IMU is connected and sensor data arrives (check compass needle rotating in left HUD)
 - Verify P2P PID gains in `config.py` (Kp=0.5 is conservative; increase for faster response)
-- Check heading error is updating in status display
-- If watchdog is timing out, increase WATCHDOG_TIMEOUT or ensure heartbeat messages arrive
+- Check **Heading Control Box** (left HUD, below compass) — input heading and click "Set"
+- Verify compass heading is updating in real-time; if not, IMU is not connected
+- If watchdog warning appears (red banner), ensure browser tab is active; heartbeat requires focus
 
 ### Pure Pursuit Waypoints Not Loading
-- Verify RTK GPS fix quality ≥ 1 (RTK Float or better) in web UI
-- Check waypoint CSV format: `lat,lon,tolerance_m,max_speed` (one per line, no header)
+- **Note**: Waypoint upload UI not yet implemented. Backend supports Pure Pursuit, but waypoints must be loaded programmatically.
+- Verify RTK GPS fix quality in right HUD (look for "RTK FIX" or "RTK FLT" badge, green color)
 - Ensure first waypoint is reasonably close to robot's starting position
-- Check logs for path projection errors
+- Check logs: `tail -f log/pathfollower.log` for path projection or waypoint format errors
 
 ### Pure Pursuit Robot Not Following Path
 - Verify GPS is working (RTK Position should update every second)
@@ -270,8 +291,9 @@ All outputs are clamped to safe ranges:
 
 ### Joystick Input Laggy
 - Check network latency (local WebSocket should be <50ms)
-- Reduce control loop rate if CPU is maxed (set CONTROL_LOOP_HZ in config.py)
+- Verify browser tab is in focus (heartbeat requires focus to maintain connection)
 - Restart browser if UI becomes unresponsive
+- Control loop runs at fixed 20 Hz; joystick sends at ~10 Hz (100 ms throttle)
 
 ## Control Mode Comparison
 
