@@ -10,7 +10,7 @@ Edit this file and restart the relevant module to apply changes.
 # 01_IMU  — BNO085 serial → WebSocket bridge
 # ══════════════════════════════════════════════════════════════════════════════
 
-IMU_SERIAL_PORT   = "/dev/cu.usbmodem101"   # Serial device (Mac: cu.usbmodem*, Linux: /dev/ttyACM0)
+IMU_SERIAL_PORT   = "/dev/cu.usbmodem1201"   # Serial device (Mac: cu.usbmodem*, Linux: /dev/ttyACM0)
 IMU_BAUD          = 921600                   # Serial baud rate
 IMU_WS_PORT       = 8765                     # HTTP port; WebSocket = IMU_WS_PORT + 1
 IMU_NORTH_OFFSET  = 0.0                      # North heading offset (degrees) for yaw calibration
@@ -20,7 +20,7 @@ IMU_NORTH_OFFSET  = 0.0                      # North heading offset (degrees) fo
 # 02_RTK  — RTK GPS serial → WebSocket bridge
 # ══════════════════════════════════════════════════════════════════════════════
 
-RTK_SERIAL_PORT   = "/dev/cu.usbmodem11203"  # RTK receiver serial port (Linux: /dev/ttyACM1)
+RTK_SERIAL_PORT   = "/dev/cu.usbmodem2403"  # RTK receiver serial port (Linux: /dev/ttyACM1)
 RTK_BAUD          = 9600                     # Serial baud rate (NMEA standard)
 RTK_WS_PORT       = 8775                     # HTTP port; WebSocket = RTK_WS_PORT + 1
 RTK_HZ            = 5.0                      # Broadcast rate (Hz)
@@ -54,7 +54,7 @@ MAX_ANGULAR_VEL       = 1.0                       # Generic max angular velocity
 # ══════════════════════════════════════════════════════════════════════════════
 
 ROBOT_WS_PORT          = 8888                      # HTTP port; WebSocket = ROBOT_WS_PORT + 1
-ROBOT_SERIAL_PORT      = "/dev/cu.usbmodem11301"   # Feather M4 serial port (Linux: /dev/ttyACM0)
+ROBOT_SERIAL_PORT      = "/dev/cu.usbmodem1301"   # Feather M4 serial port (Linux: /dev/ttyACM0)
 ROBOT_SERIAL_BAUD      = 115200                    # Serial baud rate
 ROBOT_SERIAL_TIMEOUT   = 1.0                       # Serial read timeout (seconds)
 ROBOT_MAX_LINEAR       = 1.0                       # Max linear velocity (m/s)
@@ -107,12 +107,6 @@ CAM_ENABLE_DISPARITY  = False         # Enable raw disparity stream alongside de
 
 PATHFOLLOWER_WS_PORT          = 8890                      # HTTP port; WebSocket = PATHFOLLOWER_WS_PORT + 1
 PATHFOLLOWER_FEATHER_PORT     = "/dev/cu.usbmodem11301"  # Feather M4 CAN bridge for velocity commands
-PATHFOLLOWER_FEATHER_BAUD     = 115200                   # Feather serial baud rate
-PATHFOLLOWER_FEATHER_TIMEOUT  = 1.0                      # Serial read timeout (seconds)
-PATHFOLLOWER_IMU_PORT         = "/dev/cu.usbmodem101"    # ESP32-C3 IMU serial port
-PATHFOLLOWER_IMU_BAUD         = 921600                   # IMU baud rate
-PATHFOLLOWER_RTK_PORT         = "/dev/cu.usbmodem11203"  # RTK GPS serial port
-PATHFOLLOWER_RTK_BAUD         = 9600                     # RTK baud rate (NMEA standard)
 PATHFOLLOWER_MAX_LINEAR_VEL   = 0.8                      # Max linear velocity (m/s)
 PATHFOLLOWER_MAX_ANGULAR_VEL  = 1.5                      # Max angular velocity (rad/s)
 
@@ -122,6 +116,3 @@ PATHFOLLOWER_PID_KI           = 0.05                     # P2P PID integral gain
 PATHFOLLOWER_PID_KD           = 0.1                      # P2P PID derivative gain for heading
 
 # Note: Pure Pursuit (waypoint-based) uses NAV_* constants (defined in section 03_Nav)
-
-PATHFOLLOWER_WATCHDOG_TIMEOUT = 2.0                      # Watchdog timeout (seconds); triggers e-stop
-PATHFOLLOWER_NORTH_OFFSET     = 0.0                      # North heading offset (degrees) for IMU

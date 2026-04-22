@@ -154,6 +154,7 @@ class IMUPipeline:
     def __init__(self, hz_tracker: FrameRateTracker, north_offset_deg: float = 0.0) -> None:
         self._hz_tracker = hz_tracker
         self._north_offset_deg: float = north_offset_deg
+        self._current_frame: IMUFrame | None = None
 
     @property
     def north_offset_deg(self) -> float:
@@ -181,7 +182,12 @@ class IMUPipeline:
         frame = self._enrich_euler(frame)
         frame = self._enrich_heading(frame)
         frame = self._enrich_hz(frame)
+        self._current_frame = frame
         return self._serialize(frame)
+
+    def snapshot(self) -> IMUFrame | None:
+        """Return the last successfully processed IMU frame."""
+        return self._current_frame
 
     # ── Pipeline stages (private) ─────────────────────────────────────────────
 
