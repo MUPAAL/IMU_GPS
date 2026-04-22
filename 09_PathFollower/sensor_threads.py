@@ -43,9 +43,9 @@ class IMUReader(threading.Thread):
 
     def __init__(
         self,
-        port: str = config.PATHFOLLOWER_IMU_PORT,
-        baud: int = config.PATHFOLLOWER_IMU_BAUD,
-        north_offset_deg: float = config.PATHFOLLOWER_NORTH_OFFSET,
+        port: str = config.IMU_SERIAL_PORT,
+        baud: int = config.IMU_BAUD,
+        north_offset_deg: float = config.IMU_NORTH_OFFSET,
     ):
         super().__init__(daemon=True, name="IMUReader")
         self._port = port
@@ -93,13 +93,13 @@ class IMUReader(threading.Thread):
                 # Process through pipeline and update snapshot
                 result_json = self._pipeline.process(line)
                 if result_json is not None:
-                    # Extract IMUFrame from pipeline
-                    frame = self._pipeline._current_frame
-                    with self._snapshot_lock:
-                        self._snapshot = frame
-                        logger.debug(
-                            f"IMUReader: snapshot updated. heading={frame.heading:.1f}°"
-                        )
+                    frame = self._pipeline.snapshot()
+                    if frame is not None:
+                        with self._snapshot_lock:
+                            self._snapshot = frame
+                            logger.debug(
+                                f"IMUReader: snapshot updated. heading={frame.heading:.1f}°"
+                            )
 
             except serial.SerialException:
                 break
@@ -127,8 +127,8 @@ class RTKReader(threading.Thread):
 
     def __init__(
         self,
-        port: str = config.PATHFOLLOWER_RTK_PORT,
-        baud: int = config.PATHFOLLOWER_RTK_BAUD,
+        port: str = config.RTK_SERIAL_PORT,
+        baud: int = config.RTK_BAUD,
     ):
         super().__init__(daemon=True, name="RTKReader")
         self._port = port

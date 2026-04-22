@@ -135,16 +135,16 @@ class PathFollowerController:
         """Open serial connection to Feather M4."""
         try:
             self._ser = serial.Serial(
-                config.PATHFOLLOWER_FEATHER_PORT,
-                config.PATHFOLLOWER_FEATHER_BAUD,
-                timeout=config.PATHFOLLOWER_FEATHER_TIMEOUT,
+                config.ROBOT_SERIAL_PORT,
+                config.ROBOT_SERIAL_BAUD,
+                timeout=config.ROBOT_SERIAL_TIMEOUT,
             )
             logger.info(
-                f"Serial port opened: {config.PATHFOLLOWER_FEATHER_PORT} @ {config.PATHFOLLOWER_FEATHER_BAUD} baud"
+                f"Serial port opened: {config.ROBOT_SERIAL_PORT} @ {config.ROBOT_SERIAL_BAUD} baud"
             )
         except serial.SerialException as e:
             logger.error(
-                f"Failed to open serial port [{config.PATHFOLLOWER_FEATHER_PORT}]: {e}"
+                f"Failed to open serial port [{config.ROBOT_SERIAL_PORT}]: {e}"
             )
 
     def close_serial(self) -> None:
@@ -258,7 +258,7 @@ class PathFollowerController:
             next_time = now + dt
 
             # Check watchdog
-            if now - self._last_heartbeat > config.PATHFOLLOWER_WATCHDOG_TIMEOUT:
+            if now - self._last_heartbeat > config.ROBOT_WATCHDOG_TIMEOUT:
                 if not self._watchdog_active:
                     logger.warning("Watchdog timeout: stopping motors")
                     self._watchdog_active = True
