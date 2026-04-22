@@ -37,6 +37,16 @@ NAV_IMU_WS            = "ws://localhost:8766"     # imu_bridge WebSocket URL
 NAV_RTK_WS            = "ws://localhost:8776"     # rtk_bridge WebSocket URL
 NAV_HZ                = 10.0                      # Navigation loop broadcast rate (Hz)
 NAV_REACH_TOLERANCE_M = 0.5                       # Waypoint arrival tolerance (meters)
+NAV_PID_KP            = 0.8                       # Generic navigation PID proportional gain
+NAV_PID_KI            = 0.01                      # Generic navigation PID integral gain
+NAV_PID_KD            = 0.05                      # Generic navigation PID derivative gain
+NAV_LOOKAHEAD_M       = 2.0                       # Pure Pursuit lookahead distance (meters)
+NAV_DECEL_RADIUS_M    = 3.0                       # Deceleration radius (meters)
+NAV_ARRIVE_FRAMES     = 5                         # Consecutive frames to confirm arrival
+NAV_GPS_TIMEOUT_S     = 5.0                       # GPS timeout before pause (seconds)
+NAV_MA_WINDOW         = 10                        # Moving average filter window size
+MAX_LINEAR_VEL        = 1.0                       # Generic max linear velocity (m/s)
+MAX_ANGULAR_VEL       = 1.0                       # Generic max angular velocity (rad/s)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

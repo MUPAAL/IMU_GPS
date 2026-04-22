@@ -19,12 +19,21 @@ Mode enums:
 import asyncio
 import logging
 import math
+import sys
 import threading
 import time
+from pathlib import Path
 from enum import Enum, auto
 from typing import Callable, Coroutine
 
-from config import NAV_GPS_TIMEOUT_S, MAX_LINEAR_VEL, MAX_ANGULAR_VEL
+# Add parent directories to path to import config
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
+from config import (
+    NAV_GPS_TIMEOUT_S, MAX_LINEAR_VEL, MAX_ANGULAR_VEL,
+    # AUTONAV aliases (for backward compatibility)
+    AUTONAV_GPS_TIMEOUT_S, AUTONAV_MAX_LINEAR_VEL, AUTONAV_MAX_ANGULAR_VEL,
+)
 from navigation.geo_utils import haversine_distance, bearing_to_target
 from navigation.waypoint import WaypointManager
 from navigation.gps_filter import MovingAverageFilter, KalmanFilter

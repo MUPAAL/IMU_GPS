@@ -76,6 +76,18 @@ PATHFOLLOWER_NAV_PID_KI = 0.01
 PATHFOLLOWER_NAV_PID_KD = 0.05
 PATHFOLLOWER_NAV_LOOKAHEAD_M = 2.0       # Lookahead distance (m)
 PATHFOLLOWER_NAV_DECEL_RADIUS_M = 3.0    # Deceleration radius (m)
+
+# Generic navigation parameters (used by navigation/ modules)
+NAV_PID_KP = 0.8                         # Generic navigation PID proportional
+NAV_PID_KI = 0.01                        # Generic navigation PID integral
+NAV_PID_KD = 0.05                        # Generic navigation PID derivative
+NAV_LOOKAHEAD_M = 2.0                    # Generic lookahead distance
+NAV_DECEL_RADIUS_M = 3.0                 # Generic deceleration radius
+NAV_ARRIVE_FRAMES = 5                    # Frames to confirm waypoint arrival
+NAV_GPS_TIMEOUT_S = 5.0                  # GPS timeout threshold
+NAV_MA_WINDOW = 10                       # Moving average filter window
+MAX_LINEAR_VEL = 1.0                     # Generic max linear velocity
+MAX_ANGULAR_VEL = 1.0                    # Generic max angular velocity
 ```
 
 ### 4. Run the Controller
@@ -306,12 +318,19 @@ For field tuning: Start with default values, increase Kp if robot lags path, dec
 **Python Packages**:
 - `pyserial>=3.5` — Serial port I/O
 - `websockets>=12.0` — WebSocket server
+- `numpy` — Numeric operations (used by navigation filters)
 
-**Imported Modules** (code reuse):
-- `00_robot_side/navigation/controller.py` — `PIDController`
-- `00_robot_side/navigation/geo_utils.py` — `normalize_angle`, `bearing_to_target`, `haversine_distance`, `project_point_on_segment`
+**Local Modules** (code reuse):
+- `navigation/controller.py` — Copied from `00_robot_side/navigation/controller.py`
+  - `PIDController`, `P2PController`, `PurePursuitController`
+- `navigation/geo_utils.py` — Geodetic utilities (bearing, distance, path projection)
+- `navigation/waypoint.py` — Waypoint management
+- `navigation/gps_filter.py` — GPS filtering (moving average, Kalman)
+- `navigation/nav_engine.py` — Full navigation state machine (optional, not currently used)
 - `01_IMU/imu_bridge.py` — `IMUPipeline`, `FrameRateTracker`
 - `02_RTK/rtk_bridge.py` — `NMEAPipeline`
+
+**Note**: The `navigation/` folder is a complete copy from `00_robot_side/navigation/` with import paths fixed to work in the PATHFOLLOWER context. It contains no modifications to logic.
 
 All are imported dynamically to avoid duplicate code.
 
@@ -321,17 +340,34 @@ All are imported dynamically to avoid duplicate code.
 09_PathFollower/
 ├── main.py                    # Entry point
 ├── web_controller.py          # HTTP + WebSocket server, control loop
-├── heading_controller.py      # PID heading tracker
+├── heading_controller.py      # Multi-mode controller (P2P + Pure Pursuit)
 ├── sensor_threads.py          # IMU and RTK reader threads
 ├── requirements.txt           # Dependencies
 ├── README.md                  # This file
 ├── CLAUDE.md                  # Architecture and design documentation
 ├── log/                       # Runtime logs (created on first run)
+├── navigation/                # Navigation modules (copied from 00_robot_side)
+│   ├── controller.py          # PIDController, P2PController, PurePursuitController
+│   ├── geo_utils.py           # Bearing, distance, path projection utilities
+│   ├── waypoint.py            # Waypoint dataclass and manager
+│   ├── gps_filter.py          # Moving average and Kalman filters
+│   ├── nav_engine.py          # Full navigation state machine (optional)
+│   └── __init__.py
 └── web_static/
     ├── index.html            # Web UI layout
     ├── style.css             # Dark theme styling
     └── visualizer.js         # WebSocket client and joystick input
 ```
+
+### Navigation Folder
+
+The `navigation/` subdirectory is a complete copy of `00_robot_side/navigation/` with all imports fixed to work in this context. It provides:
+- **Heading Control** via `P2PController` and `PurePursuitController`
+- **GPS Filtering** via `MovingAverageFilter` and `KalmanFilter`
+- **Geodetic Utilities** for bearing and distance calculations
+- **Waypoint Management** for multi-point navigation
+
+All navigation parameters are read from the root `config.py` using `NAV_*` keys.
 
 ## Performance Notes
 

@@ -7,12 +7,17 @@ KalmanFilter        : 4 维卡尔曼滤波（位置 + 速度），支持 IMU 加
 
 import logging
 import math
+import sys
+from pathlib import Path
 from collections import deque
 from typing import Tuple
 
 import numpy as np
 
-from config import NAV_MA_WINDOW
+# Add parent directories to path to import config
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
+from config import NAV_MA_WINDOW, AUTONAV_MA_WINDOW
 
 logger = logging.getLogger(__name__)
 

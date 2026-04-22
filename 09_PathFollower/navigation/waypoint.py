@@ -8,10 +8,15 @@ CSV format (QGIS export):
 """
 
 import logging
+import sys
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 
-from config import NAV_ARRIVE_FRAMES
+# Add parent directories to path to import config
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
+from config import NAV_ARRIVE_FRAMES, AUTONAV_ARRIVE_FRAMES
 
 logger = logging.getLogger(__name__)
 

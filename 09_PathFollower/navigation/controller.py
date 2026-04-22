@@ -8,12 +8,21 @@ PurePursuitController : Pure Pursuit control (lookahead point tracking, multi-wa
 
 import logging
 import math
+import sys
+from pathlib import Path
 from typing import Tuple
+
+# Add parent directories to path to import config
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from config import (
     NAV_PID_KP, NAV_PID_KI, NAV_PID_KD,
     NAV_DECEL_RADIUS_M, NAV_LOOKAHEAD_M,
     MAX_LINEAR_VEL, MAX_ANGULAR_VEL,
+    # AUTONAV aliases (for backward compatibility with 00_robot_side)
+    AUTONAV_PID_KP, AUTONAV_PID_KI, AUTONAV_PID_KD,
+    AUTONAV_DECEL_RADIUS_M, AUTONAV_LOOKAHEAD_M,
+    AUTONAV_MAX_LINEAR_VEL, AUTONAV_MAX_ANGULAR_VEL,
 )
 from navigation.geo_utils import (
     haversine_distance, bearing_to_target, normalize_angle, project_point_on_segment,
