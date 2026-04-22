@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PathFollower — Heading-based Control</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤖 PathFollower</h1>
+            <p>Heading-based path following with joystick control</p>
+        </header>
+
+        <!-- Status Panel -->
+        <section class="panel status-panel">
+            <h2>System Status</h2>
+            <div class="status-grid">
+                <div class="status-item">
+                    <label>Mode:</label>
+                    <span id="status-mode">—</span>
+                </div>
+                <div class="status-item">
+                    <label>Watchdog:</label>
+                    <span id="status-watchdog" class="watchdog-ok">✓ Active</span>
+                </div>
+                <div class="status-item">
+                    <label>Linear Vel:</label>
+                    <span id="status-linear">0.00</span> m/s
+                </div>
+                <div class="status-item">
+                    <label>Angular Vel:</label>
+                    <span id="status-angular">0.00</span> rad/s
+                </div>
+            </div>
+        </section>
+
+        <!-- IMU Panel -->
+        <section class="panel imu-panel">
+            <h2>IMU Orientation</h2>
+            <div class="imu-grid">
+                <div class="imu-item">
+                    <label>Heading:</label>
+                    <div class="heading-display">
+                        <span id="imu-heading">—</span>°
+                    </div>
+                    <span id="imu-heading-dir" class="heading-dir">—</span>
+                </div>
+                <div class="imu-item">
+                    <label>Roll:</label>
+                    <span id="imu-roll">—</span>°
+                </div>
+                <div class="imu-item">
+                    <label>Pitch:</label>
+                    <span id="imu-pitch">—</span>°
+                </div>
+                <div class="imu-item">
+                    <label>Yaw:</label>
+                    <span id="imu-yaw">—</span>°
+                </div>
+                <div class="imu-item">
+                    <label>Frame Rate:</label>
+                    <span id="imu-hz">0</span> Hz
+                </div>
+            </div>
+        </section>
+
+        <!-- RTK Panel -->
+        <section class="panel rtk-panel">
+            <h2>RTK Position</h2>
+            <div class="rtk-grid">
+                <div class="rtk-item">
+                    <label>Latitude:</label>
+                    <span id="rtk-lat">—</span>°
+                </div>
+                <div class="rtk-item">
+                    <label>Longitude:</label>
+                    <span id="rtk-lon">—</span>°
+                </div>
+                <div class="rtk-item">
+                    <label>Altitude:</label>
+                    <span id="rtk-alt">—</span> m
+                </div>
+                <div class="rtk-item">
+                    <label>Satellites:</label>
+                    <span id="rtk-sats">0</span>
+                </div>
+                <div class="rtk-item">
+                    <label>Fix Quality:</label>
+                    <span id="rtk-fix">No Fix</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Control Panel -->
+        <section class="panel control-panel">
+            <h2>Control</h2>
+
+            <!-- Joystick Mode -->
+            <div class="control-mode">
+                <h3>Joystick Mode</h3>
+                <div class="joystick-container">
+                    <canvas id="joystick" width="300" height="300"></canvas>
+                </div>
+                <div class="joystick-values">
+                    <div>Linear: <span id="joy-linear">0.00</span> m/s</div>
+                    <div>Angular: <span id="joy-angular">0.00</span> rad/s</div>
+                </div>
+            </div>
+
+            <!-- Heading Follow Mode -->
+            <div class="control-mode">
+                <h3>Heading Follow Mode</h3>
+                <div class="heading-input-group">
+                    <label for="target-heading">Target Heading (°):</label>
+                    <input type="number" id="target-heading" min="0" max="360" step="1" value="0">
+                    <button id="btn-set-heading" class="btn btn-primary">Set Heading</button>
+                </div>
+                <div class="heading-feedback">
+                    <div>Target: <span id="heading-target">0</span>°</div>
+                    <div>Current: <span id="heading-current">—</span>°</div>
+                    <div>Error: <span id="heading-error">—</span>°</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer>
+            <p>PathFollower • IMU + RTK Sensor Fusion • PID Heading Control</p>
+        </footer>
+    </div>
+
+    <script src="visualizer.js"></script>
+</body>
+</html>
