@@ -1,9 +1,9 @@
 """
-controller — 导航控制器
+controller — Navigation controller
 
-PIDController       : 通用 PID（角速度误差 → 角速度输出）
-P2PController       : 点对点控制（用当前朝向对准目标）
-PurePursuitController : Pure Pursuit 控制（前视点跟踪，跨多个航点）
+PIDController       : Generic PID (angular velocity error → angular velocity output)
+P2PController       : Point-to-point control (align current heading to target)
+PurePursuitController : Pure Pursuit control (lookahead point tracking, multi-waypoint)
 """
 
 import logging
@@ -24,12 +24,12 @@ logger = logging.getLogger(__name__)
 
 
 class PIDController:
-    """通用 PID 控制器（输出带限幅）。
+    """Generic PID controller (output with clamping).
 
     Args:
-        kp, ki, kd     : PID 增益
-        integral_limit : 积分限幅（防积分饱和）
-        output_limit   : 输出限幅
+        kp, ki, kd     : PID gains
+        integral_limit : Integral windup limit (prevent saturation)
+        output_limit   : Output clamping limit
     """
 
     def __init__(
@@ -51,23 +51,23 @@ class PIDController:
         self._first: bool = True
 
     def compute(self, error: float, dt: float) -> float:
-        """计算 PID 输出。
+        """Compute PID output.
 
         Args:
-            error : 误差（角速度用角度误差，单位度）
-            dt    : 时间步长（秒）
+            error : Error (for angular velocity: angle error in degrees)
+            dt    : Time step (seconds)
 
         Returns:
-            控制输出（已限幅）
+            Control output (clamped)
         """
         if dt <= 0:
             return 0.0
 
-        # 积分
+        # Integral term
         self._integral += error * dt
         self._integral = max(-self._int_lim, min(self._int_lim, self._integral))
 
-        # 微分（首帧跳过）
+        # Derivative term (skip first frame)
         if self._first:
             derivative = 0.0
             self._first = False
@@ -85,12 +85,12 @@ class PIDController:
 
 
 class P2PController:
-    """点对点（P2P）控制器。
+    """Point-to-point (P2P) controller.
 
-    算法：
-        1. bearing_error = normalize_angle(目标方位 − 机器人当前朝向)
+    Algorithm:
+        1. bearing_error = normalize_angle(target bearing − robot current heading)
         2. angular_cmd   = PID(bearing_error, dt)
-           （正误差 = 目标在右 = 右转 = angular 为正/负视协议）
+           (positive error = target to right = turn right = positive angular velocity)
         3. speed_factor  = clip(distance / NAV_DECEL_RADIUS_M, 0, 1)
            heading_factor = max(0, 1 − |bearing_error| / 90)
            linear_cmd    = max_speed × speed_factor × heading_factor
@@ -107,16 +107,16 @@ class P2PController:
         target_wp:  Waypoint,
         dt:         float,
     ) -> Tuple[float, float]:
-        """计算 (linear_cmd, angular_cmd)。
+        """Compute (linear_cmd, angular_cmd).
 
         Args:
-            robot_lat, robot_lon : 机器人当前位置（十进制度）
-            robot_bearing        : 机器人当前朝向（度，0=北，顺时针）
-            target_wp            : 目标航点
-            dt                   : 控制周期（秒）
+            robot_lat, robot_lon : Robot current position (decimal degrees)
+            robot_bearing        : Robot current heading (degrees, 0=north, clockwise)
+            target_wp            : Target waypoint
+            dt                   : Control period (seconds)
 
         Returns:
-            (linear_cmd, angular_cmd)，单位 m/s / rad/s
+            (linear_cmd, angular_cmd) in m/s / rad/s
         """
         distance = haversine_distance(robot_lat, robot_lon, target_wp.lat, target_wp.lon)
         target_bearing = bearing_to_target(robot_lat, robot_lon, target_wp.lat, target_wp.lon)
@@ -136,12 +136,13 @@ class P2PController:
 
 
 class PurePursuitController:
-    """Pure Pursuit 控制器。
+    """Pure Pursuit controller.
 
-    在路径段 [prev_wp → current_wp] 上求前视点 L，转向 L 而不是终点，
-    使轨迹平滑。退化（单航点 / 投影失败）时回落到 P2P。
+    Computes lookahead point L on path segment [prev_wp → current_wp],
+    steers towards L instead of endpoint for smooth trajectory.
+    Degrades to P2P when single waypoint or projection fails.
 
-    前视距离：NAV_LOOKAHEAD_M
+    Lookahead distance: NAV_LOOKAHEAD_M
     """
 
     def __init__(self) -> None:
@@ -156,14 +157,14 @@ class PurePursuitController:
         current_idx:  int,
         dt:           float,
     ) -> Tuple[float, float]:
-        """计算 (linear_cmd, angular_cmd)。
+        """Compute (linear_cmd, angular_cmd).
 
         Args:
-            robot_lat, robot_lon : 机器人当前位置
-            robot_bearing        : 机器人当前朝向（度）
-            waypoints            : 完整航点列表
-            current_idx          : 当前目标航点索引
-            dt                   : 控制周期（秒）
+            robot_lat, robot_lon : Robot current position
+            robot_bearing        : Robot current heading (degrees)
+            waypoints            : Complete waypoint list
+            current_idx          : Current target waypoint index
+            dt                   : Control period (seconds)
 
         Returns:
             (linear_cmd, angular_cmd)
@@ -173,14 +174,14 @@ class PurePursuitController:
 
         current_wp = waypoints[current_idx]
 
-        # 单航点或首段无前段 → fallback P2P
+        # Single waypoint or first segment without previous → fallback to P2P
         if current_idx == 0 or len(waypoints) < 2:
-            logger.debug("PurePursuitController: 单航点，回落 P2P")
+            logger.debug("PurePursuitController: single waypoint, fallback to P2P")
             return self._p2p.compute(robot_lat, robot_lon, robot_bearing, current_wp, dt)
 
         prev_wp = waypoints[current_idx - 1]
 
-        # 求机器人在路径段 [prev → current] 上的投影
+        # Project robot onto path segment [prev → current]
         try:
             proj_lat, proj_lon, t = project_point_on_segment(
                 robot_lat, robot_lon,
@@ -188,26 +189,26 @@ class PurePursuitController:
                 current_wp.lat, current_wp.lon,
             )
         except Exception as e:
-            logger.warning(f"PurePursuitController: 投影计算失败，回落 P2P: {e}")
+            logger.warning(f"PurePursuitController: projection calculation failed, fallback to P2P: {e}")
             return self._p2p.compute(robot_lat, robot_lon, robot_bearing, current_wp, dt)
 
-        # 构建前视点：从投影点沿路径方向偏移 NAV_LOOKAHEAD_M
+        # Construct lookahead point: offset from projection point along path direction by NAV_LOOKAHEAD_M
         seg_bearing = bearing_to_target(prev_wp.lat, prev_wp.lon, current_wp.lat, current_wp.lon)
         seg_len     = haversine_distance(prev_wp.lat, prev_wp.lon, current_wp.lat, current_wp.lon)
 
         if seg_len < 0.1:
-            logger.warning("PurePursuitController: 路径段过短，回落 P2P")
+            logger.warning("PurePursuitController: path segment too short, fallback to P2P")
             return self._p2p.compute(robot_lat, robot_lon, robot_bearing, current_wp, dt)
 
-        # 剩余路径长度（从投影点到当前航点）
+        # Remaining path length (from projection point to current waypoint)
         dist_to_wp = haversine_distance(proj_lat, proj_lon, current_wp.lat, current_wp.lon)
 
         if dist_to_wp < NAV_LOOKAHEAD_M:
-            # 前视点超过当前航点，直接用当前航点作为前视目标
+            # Lookahead point exceeds current waypoint, use it directly as lookahead target
             lookahead_lat = current_wp.lat
             lookahead_lon = current_wp.lon
         else:
-            # 前视点 = 投影点沿路径方向偏移 NAV_LOOKAHEAD_M
+            # Lookahead point = projection point offset along path direction by NAV_LOOKAHEAD_M
             cos_lat = math.cos(math.radians(proj_lat))
             rad_bearing = math.radians(seg_bearing)
             dlat_m = NAV_LOOKAHEAD_M * math.cos(rad_bearing)
@@ -215,7 +216,7 @@ class PurePursuitController:
             lookahead_lat = proj_lat + math.degrees(dlat_m / 6_371_000.0)
             lookahead_lon = proj_lon + math.degrees(dlon_m / (6_371_000.0 * cos_lat + 1e-12))
 
-        # 构造一个临时"虚拟"航点用于 P2P 计算
+        # Construct temporary "virtual" waypoint for P2P computation
         from dataclasses import replace
         lookahead_wp = replace(current_wp, lat=lookahead_lat, lon=lookahead_lon)
 

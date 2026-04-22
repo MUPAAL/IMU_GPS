@@ -1,20 +1,21 @@
 """
-coverage_planner — Boustrophedon（蛇形往返）覆盖路径生成器
+coverage_planner — Boustrophedon (snake sweep) coverage path generator
 
-输入一块田地的 GPS 边界多边形，自动生成等间距往返扫描航点 CSV。
-生成的 CSV 可直接通过 NavigationEngine.load_waypoints() 加载。
+Takes GPS boundary polygon of a field and auto-generates equally-spaced
+back-and-forth scanning waypoint CSV. Generated CSV can be directly loaded
+via NavigationEngine.load_waypoints().
 
-算法流程（Boustrophedon / 割草机式）：
-    1. 将多边形顶点投影到本地 ENU 平面（以重心为原点）
-    2. 将 ENU (east, north) 转换到扫描坐标系 (x', y')
-       x' = 机器人行进方向（沿 direction_deg 方向）
-       y' = 行与行之间的间距方向（垂直于 x'）
-    3. 按 row_spacing × (1 - overlap) 在 y' 方向生成等间距扫描线
-    4. 每条扫描线与多边形求交，取最左最右端点
-    5. S 形连接（奇数行翻转）
-    6. 反投影回 WGS-84 经纬度，生成 Waypoint CSV
+Algorithm flow (Boustrophedon / lawn mower pattern):
+    1. Project polygon vertices to local ENU plane (with centroid as origin)
+    2. Transform ENU (east, north) to scan coordinate system (x', y')
+       x' = robot travel direction (along direction_deg)
+       y' = inter-row spacing direction (perpendicular to x')
+    3. Generate equally-spaced scan lines in y' direction by row_spacing × (1 - overlap)
+    4. Find intersections of each scan line with polygon, extract left/right endpoints
+    5. Connect in S pattern (reverse odd rows)
+    6. Back-project to WGS-84 lat/lon, generate Waypoint CSV
 
-ENU↔扫描坐标系变换（direction_deg = θ，为罗盘方位角，0=North）：
+ENU↔Scan coordinate transform (direction_deg = θ, compass bearing, 0=North):
     x' =  east * sin(θ) + north * cos(θ)
     y' = -east * cos(θ) + north * sin(θ)
     east  = x' * sin(θ) - y' * cos(θ)
@@ -37,15 +38,15 @@ DEFAULT_MAX_SPEED    = 0.5
 
 
 class CoveragePlanner:
-    """Boustrophedon（蛇形往返）覆盖路径生成器。
+    """Boustrophedon (snake sweep) coverage path generator.
 
     Args:
-        boundary      : GPS 边界多边形 [(lat, lon), ...]，至少 3 个顶点。
-        row_spacing   : 行间距（米），默认 1.0
-        direction_deg : 机器人行进方向（罗盘角，0=N-S 往返，90=E-W 往返），默认 0
-        overlap       : 行重叠率（0~1），默认 0
-        tolerance_m   : 航点到达容差（米），默认 1.0
-        max_speed     : 各航点最大速度（m/s），默认 0.5
+        boundary      : GPS boundary polygon [(lat, lon), ...], min 3 vertices
+        row_spacing   : Row spacing (meters), default 1.0
+        direction_deg : Robot travel direction (compass bearing, 0=N-S sweep, 90=E-W sweep), default 0
+        overlap       : Row overlap ratio (0~1), default 0
+        tolerance_m   : Waypoint arrival tolerance (meters), default 1.0
+        max_speed     : Max speed at each waypoint (m/s), default 0.5
     """
 
     def __init__(
@@ -66,46 +67,46 @@ class CoveragePlanner:
         self._tolerance_m = tolerance_m
         self._max_speed   = max_speed
 
-        # 重心作为 ENU 投影原点
+        # Centroid as ENU projection origin
         lats = [p[0] for p in boundary]
         lons = [p[1] for p in boundary]
         self._origin_lat = sum(lats) / len(lats)
         self._origin_lon = sum(lons) / len(lons)
         self._cos_lat    = math.cos(math.radians(self._origin_lat))
 
-    # ── ENU 投影 ──────────────────────────────────────────────
+    # ── ENU Projection ──────────────────────────────────────────────
 
     def _to_enu(self, lat: float, lon: float) -> Tuple[float, float]:
-        """WGS-84 → 本地 ENU（米），返回 (east_m, north_m)。"""
+        """WGS-84 → Local ENU (meters), return (east_m, north_m)."""
         north = math.radians(lat - self._origin_lat) * _EARTH_RADIUS_M
         east  = math.radians(lon - self._origin_lon) * _EARTH_RADIUS_M * self._cos_lat
         return east, north
 
     def _from_enu(self, east_m: float, north_m: float) -> Tuple[float, float]:
-        """本地 ENU（米）→ WGS-84，返回 (lat, lon)。"""
+        """Local ENU (meters) → WGS-84, return (lat, lon)."""
         lat = self._origin_lat + math.degrees(north_m / _EARTH_RADIUS_M)
         lon = self._origin_lon + math.degrees(
             east_m / (_EARTH_RADIUS_M * self._cos_lat + 1e-12)
         )
         return lat, lon
 
-    # ── 坐标系变换 ─────────────────────────────────────────────
+    # ── Coordinate System Transform ─────────────────────────────────────────────
 
     def _enu_to_scan(self, east: float, north: float) -> Tuple[float, float]:
-        """ENU → 扫描坐标系 (x', y')，x' 沿 direction_deg 方向。"""
+        """ENU → Scan coordinate system (x', y'), x' along direction_deg."""
         rad = math.radians(self._direction)
         x =  east * math.sin(rad) + north * math.cos(rad)
         y = -east * math.cos(rad) + north * math.sin(rad)
         return x, y
 
     def _scan_to_enu(self, x: float, y: float) -> Tuple[float, float]:
-        """扫描坐标系 (x', y') → ENU。"""
+        """Scan coordinate system (x', y') → ENU."""
         rad = math.radians(self._direction)
         east  = x * math.sin(rad) - y * math.cos(rad)
         north = x * math.cos(rad) + y * math.sin(rad)
         return east, north
 
-    # ── 扫描线与多边形求交 ────────────────────────────────────
+    # ── Scan Line - Polygon Intersection ────────────────────────────────────
 
     @staticmethod
     def _seg_intersect_y(
@@ -113,10 +114,11 @@ class CoveragePlanner:
         x1: float, y1: float,
         x2: float, y2: float,
     ) -> Optional[float]:
-        """水平扫描线 y=const 与线段 (x1,y1)→(x2,y2) 的交点 x 坐标。
+        """Find x coordinate of intersection between horizontal scan line y=const
+        and line segment (x1,y1)→(x2,y2).
 
-        使用半开区间 [y_min, y_max) 避免顶点被重复计数。
-        无交返回 None。
+        Use half-open interval [y_min, y_max) to avoid duplicate vertex counting.
+        Return None if no intersection.
         """
         if (y1 <= y < y2) or (y2 <= y < y1):
             t = (y - y1) / (y2 - y1)
@@ -128,7 +130,7 @@ class CoveragePlanner:
         y: float,
         polygon: List[Tuple[float, float]],
     ) -> List[float]:
-        """取扫描线 y 与多边形所有边的交点 x 列表（已升序排列）。"""
+        """Get list of x coordinates where scan line y intersects all polygon edges (sorted ascending)."""
         xs = []
         n = len(polygon)
         for i in range(n):
@@ -139,17 +141,17 @@ class CoveragePlanner:
                 xs.append(xi)
         return sorted(xs)
 
-    # ── 主生成函数 ─────────────────────────────────────────────
+    # ── Main Generation Function ─────────────────────────────────────────────
 
     def generate(self) -> List[Tuple[float, float]]:
-        """生成覆盖路径，返回 GPS 坐标列表 [(lat, lon), ...]。"""
-        # 1. GPS → ENU → 扫描坐标系
+        """Generate coverage path, return GPS coordinate list [(lat, lon), ...]."""
+        # 1. GPS → ENU → Scan coordinate system
         scan_pts = [
             self._enu_to_scan(*self._to_enu(lat, lon))
             for lat, lon in self._boundary
         ]
 
-        # 2. 确定 y' 扫描范围
+        # 2. Determine y' scan range
         ys = [p[1] for p in scan_pts]
         y_min, y_max = min(ys), max(ys)
 
@@ -162,11 +164,11 @@ class CoveragePlanner:
 
         if not scan_ys:
             logger.warning(
-                "CoveragePlanner: 无法生成扫描行（区域太小或 row_spacing 太大）"
+                "CoveragePlanner: Unable to generate scan lines (region too small or row_spacing too large)"
             )
             return []
 
-        # 3. 每行与多边形求交，生成 S 形路径
+        # 3. Find intersections of each row with polygon, generate S-shaped path
         waypoints_scan: List[Tuple[float, float]] = []
         reverse = False
         for sy in scan_ys:
@@ -185,11 +187,11 @@ class CoveragePlanner:
 
         if not waypoints_scan:
             logger.warning(
-                "CoveragePlanner: 扫描线与多边形无有效交叉，请检查边界点顺序"
+                "CoveragePlanner: No valid intersection between scan lines and polygon, check boundary point order"
             )
             return []
 
-        # 4. 扫描坐标系 → ENU → GPS
+        # 4. Scan coordinate system → ENU → GPS
         gps_wps: List[Tuple[float, float]] = []
         for sx, sy in waypoints_scan:
             east, north = self._scan_to_enu(sx, sy)
@@ -197,16 +199,16 @@ class CoveragePlanner:
             gps_wps.append((lat, lon))
 
         logger.info(
-            "CoveragePlanner: 生成 %d 个航点，"
-            "row_spacing=%.2fm，overlap=%.0f%%，方向=%.0f°",
+            "CoveragePlanner: Generated %d waypoints, "
+            "row_spacing=%.2fm, overlap=%.0f%%, direction=%.0f°",
             len(gps_wps), self._row_spacing, self._overlap * 100, self._direction,
         )
         return gps_wps
 
     def generate_csv(self) -> str:
-        """生成 CSV 格式字符串，可直接传给 NavigationEngine.load_waypoints()。
+        """Generate CSV format string, can be directly passed to NavigationEngine.load_waypoints().
 
-        格式：id,lat,lon,tolerance_m,max_speed
+        Format: id,lat,lon,tolerance_m,max_speed
         """
         gps_wps = self.generate()
         if not gps_wps:
