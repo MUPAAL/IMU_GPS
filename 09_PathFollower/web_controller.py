@@ -245,8 +245,8 @@ class PathFollowerController:
             logger.info(f"Target heading set to {heading:.1f}°")
 
     async def _control_loop(self) -> None:
-        """Main control loop: read sensors, compute heading control, send velocity."""
-        dt = 1.0 / config.CONTROL_LOOP_HZ
+        """Main control loop (20 Hz): read sensors, compute heading control, send velocity."""
+        dt = 0.05  # 20 Hz
         next_time = time.time()
 
         while True:
@@ -279,8 +279,8 @@ class PathFollowerController:
             # In joystick mode, velocity is already sent via _handle_client_message
 
     async def _broadcast_loop_imu(self) -> None:
-        """Broadcast IMU data at IMU_BROADCAST_HZ."""
-        dt = 1.0 / config.IMU_BROADCAST_HZ
+        """Broadcast IMU data at 20 Hz."""
+        dt = 0.05  # 20 Hz
         next_time = time.time()
 
         while True:
@@ -302,8 +302,8 @@ class PathFollowerController:
                 await self._broadcast(obj)
 
     async def _broadcast_loop_rtk(self) -> None:
-        """Broadcast RTK data at RTK_BROADCAST_HZ."""
-        dt = 1.0 / config.RTK_BROADCAST_HZ
+        """Broadcast RTK data at 1 Hz."""
+        dt = 1.0  # 1 Hz
         next_time = time.time()
 
         while True:
@@ -325,8 +325,8 @@ class PathFollowerController:
                 await self._broadcast(obj)
 
     async def _broadcast_loop_status(self) -> None:
-        """Broadcast system status at STATUS_BROADCAST_HZ."""
-        dt = 1.0 / config.STATUS_BROADCAST_HZ
+        """Broadcast system status at 2 Hz."""
+        dt = 0.5  # 2 Hz
         next_time = time.time()
 
         while True:

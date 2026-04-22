@@ -96,12 +96,12 @@ class PurePursuitController:
 
     def __init__(
         self,
-        kp: float = config.PATHFOLLOWER_NAV_PID_KP,
-        ki: float = config.PATHFOLLOWER_NAV_PID_KI,
-        kd: float = config.PATHFOLLOWER_NAV_PID_KD,
+        kp: float = config.NAV_PID_KP,
+        ki: float = config.NAV_PID_KI,
+        kd: float = config.NAV_PID_KD,
         max_angular_vel: float = config.PATHFOLLOWER_MAX_ANGULAR_VEL,
-        lookahead_m: float = config.PATHFOLLOWER_NAV_LOOKAHEAD_M,
-        decel_radius_m: float = config.PATHFOLLOWER_NAV_DECEL_RADIUS_M,
+        lookahead_m: float = config.NAV_LOOKAHEAD_M,
+        decel_radius_m: float = config.NAV_DECEL_RADIUS_M,
     ):
         self._pid = PIDController(
             kp=kp,

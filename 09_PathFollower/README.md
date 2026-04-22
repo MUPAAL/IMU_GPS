@@ -65,30 +65,17 @@ PATHFOLLOWER_RTK_PORT = "/dev/cu.usbmodem11203"
 PATHFOLLOWER_MAX_LINEAR_VEL = 0.8        # m/s
 PATHFOLLOWER_MAX_ANGULAR_VEL = 1.5       # rad/s
 
-# Point-to-Point (heading-based) PID gains
+# Point-to-Point (heading-based) control gains
 PATHFOLLOWER_PID_KP = 0.5                # Proportional gain
 PATHFOLLOWER_PID_KI = 0.05               # Integral gain
 PATHFOLLOWER_PID_KD = 0.1                # Derivative gain
 
-# Pure Pursuit (waypoint-based) PID gains
-PATHFOLLOWER_NAV_PID_KP = 0.8            # More aggressive steering
-PATHFOLLOWER_NAV_PID_KI = 0.01
-PATHFOLLOWER_NAV_PID_KD = 0.05
-PATHFOLLOWER_NAV_LOOKAHEAD_M = 2.0       # Lookahead distance (m)
-PATHFOLLOWER_NAV_DECEL_RADIUS_M = 3.0    # Deceleration radius (m)
-
-# Generic navigation parameters (used by navigation/ modules)
-NAV_PID_KP = 0.8                         # Generic navigation PID proportional
-NAV_PID_KI = 0.01                        # Generic navigation PID integral
-NAV_PID_KD = 0.05                        # Generic navigation PID derivative
-NAV_LOOKAHEAD_M = 2.0                    # Generic lookahead distance
-NAV_DECEL_RADIUS_M = 3.0                 # Generic deceleration radius
-NAV_ARRIVE_FRAMES = 5                    # Frames to confirm waypoint arrival
-NAV_GPS_TIMEOUT_S = 5.0                  # GPS timeout threshold
-NAV_MA_WINDOW = 10                       # Moving average filter window
-MAX_LINEAR_VEL = 1.0                     # Generic max linear velocity
-MAX_ANGULAR_VEL = 1.0                    # Generic max angular velocity
+# Pure Pursuit uses shared NAV_* parameters (from section 03_Nav):
+# NAV_PID_KP = 0.8, NAV_PID_KI = 0.01, NAV_PID_KD = 0.05
+# NAV_LOOKAHEAD_M = 2.0, NAV_DECEL_RADIUS_M = 3.0
 ```
+
+**Note**: Broadcast frequencies (control loop 20Hz, IMU 20Hz, RTK 1Hz, status 2Hz) are hardcoded in `web_controller.py` and do not require config parameters.
 
 ### 4. Run the Controller
 ```bash
@@ -300,18 +287,21 @@ All outputs are clamped to safe ranges:
 
 ## Tuning Guide
 
-**P2P PID Gains** (heading error → angular velocity):
+**P2P PID Gains** (for heading-based control, `PATHFOLLOWER_PID_*`):
 - **Kp = 0.5** (conservative) — Start here, increase if unresponsive
 - **Ki = 0.05** (slow integral) — Eliminates drift; too high causes oscillation
 - **Kd = 0.1** (light damping) — Reduces overshoot; too high adds noise sensitivity
 
-**Pure Pursuit Parameters** (waypoint following):
-- **Lookahead Distance = 2.0 m** — Increase for faster, wider turns; decrease for tighter tracking
-- **Deceleration Radius = 3.0 m** — Larger values create smoother approaches; should be > waypoint tolerance
-- **Kp = 0.8** (aggressive) — Faster steering than P2P; adjust if overshooting path
-- **Ki = 0.01, Kd = 0.05** — Conservative integral/derivative to avoid oscillation on path
+**Pure Pursuit Parameters** (for waypoint following, shared `NAV_*` constants):
+- **NAV_LOOKAHEAD_M = 2.0 m** — Increase for faster, wider turns; decrease for tighter tracking
+- **NAV_DECEL_RADIUS_M = 3.0 m** — Larger values create smoother approaches; should be > waypoint tolerance
+- **NAV_PID_KP = 0.8** (aggressive) — Faster steering than P2P; adjust if overshooting path
+- **NAV_PID_KI = 0.01, NAV_PID_KD = 0.05** — Conservative integral/derivative to avoid oscillation on path
 
-For field tuning: Start with default values, increase Kp if robot lags path, decrease if it oscillates. If GPS is noisy, increase lookahead distance.
+**Field Tuning Tips**:
+- Start with defaults; increase `NAV_PID_KP` if robot lags path, decrease if it oscillates
+- If GPS is noisy, increase `NAV_LOOKAHEAD_M` for smoother paths
+- Broadcast frequencies (20Hz control, 1Hz RTK) are hardcoded and stable; no tuning needed
 
 ## Module Dependencies
 

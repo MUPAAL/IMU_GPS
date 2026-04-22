@@ -121,12 +121,7 @@ PATHFOLLOWER_PID_KP           = 0.5                      # P2P PID proportional 
 PATHFOLLOWER_PID_KI           = 0.05                     # P2P PID integral gain for heading
 PATHFOLLOWER_PID_KD           = 0.1                      # P2P PID derivative gain for heading
 
-# Pure Pursuit (waypoint-based) control gains
-PATHFOLLOWER_NAV_PID_KP       = 0.8                      # Pure Pursuit PID proportional gain
-PATHFOLLOWER_NAV_PID_KI       = 0.01                     # Pure Pursuit PID integral gain
-PATHFOLLOWER_NAV_PID_KD       = 0.05                     # Pure Pursuit PID derivative gain
-PATHFOLLOWER_NAV_LOOKAHEAD_M  = 2.0                      # Pure Pursuit lookahead distance (meters)
-PATHFOLLOWER_NAV_DECEL_RADIUS_M = 3.0                    # Deceleration radius before waypoint (meters)
+# Note: Pure Pursuit (waypoint-based) uses NAV_* constants (defined in section 03_Nav)
 
 PATHFOLLOWER_WATCHDOG_TIMEOUT = 2.0                      # Watchdog timeout (seconds); triggers e-stop
 PATHFOLLOWER_NORTH_OFFSET     = 0.0                      # North heading offset (degrees) for IMU
