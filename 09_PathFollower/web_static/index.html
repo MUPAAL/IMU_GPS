@@ -108,6 +108,57 @@
     </div>
   </div>
 
+  <!-- ── Bottom Control Bar: Speed + Navigation ── -->
+  <div id="bottom-bar">
+    <span id="speed-label">SPD</span>
+    <input type="range" id="speed-slider" min="10" max="100" step="10" value="50">
+    <span id="speed-value">50%</span>
+    <input type="file" id="csv-file-input" accept=".csv,text/csv">
+    <button id="nav-upload-btn">📂 CSV</button>
+    <span id="nav-wp-count">0 WP</span>
+    <button class="nav-mode-btn active" id="btn-p2p"     title="Point To Point Direct Navigation">P2P</button>
+    <button class="nav-mode-btn"        id="btn-pursuit" title="Pure Pursuit Path Tracking">PURSUIT</button>
+    <button id="nav-auto-btn" class="nav-idle">▶ AUTO</button>
+    <button id="nav-force-btn" class="nav-mode-btn" title="Force start navigation even without GPS fix">FORCE</button>
+    <button id="cov-toggle-btn" class="nav-mode-btn" title="Coverage Path Planner">COV</button>
+  </div>
+
+  <!-- ── Coverage Path Planner Modal ── -->
+  <div id="cov-modal">
+    <div id="cov-panel">
+      <div class="cov-panel-title">COVERAGE PATH PLANNER</div>
+      <div class="cov-row">
+        <label class="cov-label">ROW SPACING (m)</label>
+        <input type="number" id="cov-spacing" value="1.0" min="0.1" max="50" step="0.1">
+      </div>
+      <div class="cov-row">
+        <label class="cov-label">DIRECTION (° compass, 0=N-S rows)</label>
+        <input type="number" id="cov-direction" value="0" min="0" max="359" step="1">
+      </div>
+      <div class="cov-row">
+        <label class="cov-label">OVERLAP (%)</label>
+        <input type="number" id="cov-overlap" value="0" min="0" max="90" step="5">
+      </div>
+      <div class="cov-row">
+        <label class="cov-label">TOLERANCE (m)</label>
+        <input type="number" id="cov-tolerance" value="1.0" min="0.1" max="10" step="0.1">
+      </div>
+      <div class="cov-row">
+        <label class="cov-label">BOUNDARY POINTS (one lat,lon per line)</label>
+        <textarea id="cov-boundary" rows="5" placeholder="37.123456,-122.123456&#10;37.123500,-122.123456&#10;37.123500,-122.123000&#10;37.123456,-122.123000"></textarea>
+      </div>
+      <div id="cov-status"></div>
+      <button id="cov-gen-btn">⚡ GENERATE PATH</button>
+      <button id="cov-close-btn">✕ CLOSE</button>
+    </div>
+  </div>
+
+  <!-- AUTO MODE overlay -->
+  <div id="auto-overlay">
+    <div id="auto-overlay-text">AUTO MODE</div>
+    <div id="auto-overlay-sub">JOYSTICK DISABLED</div>
+  </div>
+
   <!-- Hidden Joy Data Element -->
   <div id="joy-data-hidden">
     <span id="joy-force"></span>

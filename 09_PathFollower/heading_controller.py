@@ -92,6 +92,7 @@ class PurePursuitController:
     Projects robot onto current path segment, computes lookahead point at
     NAV_LOOKAHEAD_M distance ahead, and steers toward lookahead instead of
     endpoint for smooth trajectories. Degrades to P2P if needed.
+    Supports heading offset for rotating the navigation reference frame.
     """
 
     def __init__(
@@ -119,6 +120,7 @@ class PurePursuitController:
         self._current_idx = 0
         self._current_heading = 0.0
         self._last_target_bearing = 0.0
+        self._heading_offset_deg = 0.0  # Offset applied to bearing calculations
 
     def load_waypoints(self, waypoints: List[Waypoint]) -> None:
         """Load waypoint list for path following."""
@@ -172,10 +174,12 @@ class PurePursuitController:
         target_bearing = bearing_to_target(
             robot_lat, robot_lon, lookahead_lat, lookahead_lon
         )
-        self._last_target_bearing = target_bearing
+        # Apply heading offset to target bearing
+        target_bearing_with_offset = normalize_angle(target_bearing + self._heading_offset_deg)
+        self._last_target_bearing = target_bearing_with_offset
 
         # Compute steering via PID
-        bearing_error = normalize_angle(target_bearing - robot_bearing)
+        bearing_error = normalize_angle(target_bearing_with_offset - robot_bearing)
         angular_cmd = self._pid.compute(bearing_error, dt)
 
         # Compute distance to current waypoint
@@ -208,7 +212,7 @@ class PurePursuitController:
 
         try:
             # Project robot onto segment [prev_wp → current_wp]
-            proj_lat, proj_lon, t = project_point_on_segment(
+            proj_lat, proj_lon, _ = project_point_on_segment(
                 robot_lat,
                 robot_lon,
                 prev_wp.lat,
@@ -225,13 +229,10 @@ class PurePursuitController:
                 return current_wp.lat, current_wp.lon
 
             # Otherwise, offset lookahead distance along segment toward current_wp
-            segment_bearing = bearing_to_target(prev_wp.lat, prev_wp.lon, current_wp.lat, current_wp.lon)
-
-            # Offset from proj point along bearing
+            # Offset from proj point along segment direction
             offset_distance = self._lookahead_m
             lat1_rad = proj_lat * 3.14159 / 180.0
             lon1_rad = proj_lon * 3.14159 / 180.0
-            bearing_rad = segment_bearing * 3.14159 / 180.0
 
             # Haversine inverse: compute new point at offset distance
             earth_radius_m = 6371000.0
@@ -268,6 +269,22 @@ class PurePursuitController:
     def reset(self) -> None:
         self._pid.reset()
 
+    def set_heading_offset(self, offset_deg: float) -> None:
+        """Set heading offset (degrees) for rotating navigation reference frame."""
+        self._heading_offset_deg = normalize_angle(offset_deg)
+
+    def get_heading_offset(self) -> float:
+        """Get current heading offset."""
+        return self._heading_offset_deg
+
+    def check_waypoint_arrival(self, current_lat: float, current_lon: float, tolerance_m: float) -> bool:
+        """Check if current position is within tolerance of current waypoint."""
+        if not self._waypoints or self._current_idx >= len(self._waypoints):
+            return False
+        wp = self._waypoints[self._current_idx]
+        dist = haversine_distance(current_lat, current_lon, wp.lat, wp.lon)
+        return dist < tolerance_m
+
     @property
     def current_waypoint(self) -> Optional[Waypoint]:
         if self._waypoints and self._current_idx < len(self._waypoints):
@@ -284,7 +301,8 @@ class HeadingController:
     Unified heading/path controller supporting both P2P and Pure Pursuit modes.
 
     Provides a single interface for heading-based (point-to-point) and
-    GPS-based (waypoint following) navigation.
+    GPS-based (waypoint following) navigation. Supports heading offset for
+    rotating the navigation reference frame.
     """
 
     def __init__(
@@ -296,6 +314,7 @@ class HeadingController:
         self._p2p = P2PController(kp=kp, ki=ki, kd=kd)
         self._pure_pursuit = PurePursuitController(kp=kp, ki=ki, kd=kd)
         self._mode = "p2p"  # "p2p" or "pure_pursuit"
+        self._heading_offset_deg = 0.0
 
     def set_mode(self, mode: str) -> None:
         """Set navigation mode: 'p2p' or 'pure_pursuit'."""
@@ -312,6 +331,15 @@ class HeadingController:
     def load_waypoints(self, waypoints: List[Waypoint]) -> None:
         """Load waypoint list for Pure Pursuit mode."""
         self._pure_pursuit.load_waypoints(waypoints)
+
+    def set_heading_offset(self, offset_deg: float) -> None:
+        """Set heading offset for rotating navigation reference frame."""
+        self._heading_offset_deg = normalize_angle(offset_deg)
+        self._pure_pursuit.set_heading_offset(self._heading_offset_deg)
+
+    def get_heading_offset(self) -> float:
+        """Get current heading offset."""
+        return self._heading_offset_deg
 
     def compute_p2p(self, current_heading_deg: float, dt: float) -> float:
         """Compute angular velocity for P2P mode (heading tracking)."""
@@ -345,6 +373,18 @@ class HeadingController:
             return (0.0, angular)
         else:
             return self.compute_pure_pursuit(robot_lat, robot_lon, current_heading_deg, dt)
+
+    def get_current_waypoint(self) -> Optional[Waypoint]:
+        """Get current waypoint in Pure Pursuit mode."""
+        return self._pure_pursuit.current_waypoint
+
+    def advance_waypoint(self) -> bool:
+        """Advance to next waypoint. Returns True if advanced, False if at end."""
+        return self._pure_pursuit.advance_waypoint()
+
+    def check_waypoint_arrival(self, current_lat: float, current_lon: float, tolerance_m: float) -> bool:
+        """Check if current position is within tolerance of current waypoint."""
+        return self._pure_pursuit.check_waypoint_arrival(current_lat, current_lon, tolerance_m)
 
     @property
     def mode(self) -> str:

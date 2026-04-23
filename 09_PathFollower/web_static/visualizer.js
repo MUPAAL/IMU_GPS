@@ -17,6 +17,12 @@ let heartbeatTimer = null;
 let joySendTimer   = null;
 let yawLocked = false;
 
+// ── Navigation state ────────────────────────────────────────
+let speedRatio = 0.5;
+let navActive  = false;
+let navWpCount = 0;
+let navMode    = "p2p";
+
 // ── WebSocket ───────────────────────────────────────
 function connect() {
   ws = new WebSocket(WS_URL);
@@ -42,9 +48,13 @@ function connect() {
       const msgTypeEl = document.getElementById('last-msg-type');
       if (msgTypeEl) msgTypeEl.textContent = msg.type || 'unknown';
       const handlers = {
-        imu:    handleIMU,
-        status: handleStatus,
-        rtk:    handleRTK,
+        imu:              handleIMU,
+        status:           handleStatus,
+        rtk:              handleRTK,
+        waypoints_loaded: handleWaypointsLoaded,
+        nav_status:       handleNavStatus,
+        nav_complete:     handleNavComplete,
+        coverage_ready:   handleCoverageReady,
       };
       const handler = handlers[msg.type];
       if (handler) handler(msg);
@@ -167,6 +177,106 @@ function handleRTK(msg) {
   document.getElementById('rtk-sats').textContent = (msg.num_sats !== null && msg.num_sats !== undefined) ? msg.num_sats : '--';
 }
 
+// ── Navigation handlers ──────────────────────────────────────
+function handleWaypointsLoaded(msg) {
+  navWpCount = msg.count || 0;
+  const el = document.getElementById('nav-wp-count');
+  el.textContent = navWpCount + ' WP';
+  if (msg.error) {
+    el.style.color = 'var(--red)';
+  } else {
+    el.style.color = navWpCount > 0 ? 'var(--green)' : 'var(--dim)';
+  }
+}
+
+function handleNavStatus(msg) {
+  const state = msg.state || 'idle';
+  navActive = (state === 'navigating');
+
+  const autoBtn = document.getElementById('nav-auto-btn');
+  if (navActive) {
+    autoBtn.className = 'nav-active'; autoBtn.textContent = '■ STOP';
+  } else {
+    autoBtn.className = 'nav-idle';   autoBtn.textContent = '▶ AUTO';
+  }
+
+  const overlay = document.getElementById('auto-overlay');
+  if (navActive) { overlay.classList.add('visible'); }
+  else           { overlay.classList.remove('visible'); }
+}
+
+function handleNavComplete(msg) {
+  navActive = false;
+  document.getElementById('auto-overlay').classList.remove('visible');
+  document.getElementById('nav-auto-btn').className   = 'nav-idle';
+  document.getElementById('nav-auto-btn').textContent = '▶ AUTO';
+}
+
+function handleCoverageReady(msg) {
+  const statusEl = document.getElementById('cov-status');
+  const genBtn   = document.getElementById('cov-gen-btn');
+  genBtn.disabled = false;
+  if (msg.error) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = '✗ ' + msg.error;
+  } else {
+    const count = msg.count || 0;
+    statusEl.style.color = count > 0 ? 'var(--green)' : 'var(--warn)';
+    statusEl.textContent = count > 0
+      ? `✓ ${count} waypoints loaded`
+      : '⚠ 0 waypoints generated — check boundary/spacing';
+    const wpEl = document.getElementById('nav-wp-count');
+    wpEl.textContent = count + ' WP';
+    wpEl.style.color = count > 0 ? 'var(--green)' : 'var(--dim)';
+  }
+}
+
+function parseBoundaryText(text) {
+  const lines = text.trim().split('\n');
+  const pts = [];
+  for (const line of lines) {
+    const parts = line.trim().split(/[\s,]+/);
+    if (parts.length >= 2) {
+      const lat = parseFloat(parts[0]);
+      const lon = parseFloat(parts[1]);
+      if (!isNaN(lat) && !isNaN(lon)) pts.push([lat, lon]);
+    }
+  }
+  return pts;
+}
+
+function sendGenerateCoverage() {
+  const boundaryText = document.getElementById('cov-boundary').value;
+  const boundary     = parseBoundaryText(boundaryText);
+  const statusEl     = document.getElementById('cov-status');
+  const genBtn       = document.getElementById('cov-gen-btn');
+
+  if (boundary.length < 3) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = '✗ Need at least 3 boundary points';
+    return;
+  }
+
+  const rowSpacing   = parseFloat(document.getElementById('cov-spacing').value)   || 1.0;
+  const directionDeg = parseFloat(document.getElementById('cov-direction').value)  || 0.0;
+  const overlapPct   = parseFloat(document.getElementById('cov-overlap').value)    || 0.0;
+  const toleranceM   = parseFloat(document.getElementById('cov-tolerance').value)  || 1.0;
+
+  statusEl.style.color = 'var(--dim)';
+  statusEl.textContent = 'Generating...';
+  genBtn.disabled = true;
+
+  sendMsg({
+    type:          'generate_coverage',
+    boundary:      boundary,
+    row_spacing:   rowSpacing,
+    direction_deg: directionDeg,
+    overlap:       overlapPct / 100.0,
+    tolerance_m:   toleranceM,
+    max_speed:     0.5,
+  });
+}
+
 // ── Direction label ──────────────────────────────────
 function dirLabel(linear, angular) {
   const fwd  = linear  >  0.05;
@@ -220,8 +330,8 @@ window.addEventListener('load', () => {
       currentAngular = 0.0;
       currentForce   = 0.0;
     } else {
-      currentLinear  =  rawY * 1.0;
-      currentAngular = -rawX * 1.0;
+      currentLinear  =  rawY * 1.0 * speedRatio;
+      currentAngular = -rawX * 1.0 * speedRatio;
       currentForce   = force;
     }
     updateJoyUI();
@@ -253,6 +363,75 @@ window.addEventListener('load', () => {
     lockYawBtn.classList.toggle('active', yawLocked);
   });
   lockYawBtn.addEventListener('touchend', (e) => { e.preventDefault(); lockYawBtn.click(); });
+
+  // Speed slider
+  const speedSlider = document.getElementById('speed-slider');
+  speedSlider.addEventListener('input', (e) => {
+    speedRatio = parseInt(e.target.value) / 100;
+    document.getElementById('speed-value').textContent = e.target.value + '%';
+  });
+
+  // CSV upload
+  const csvInput  = document.getElementById('csv-file-input');
+  const uploadBtn = document.getElementById('nav-upload-btn');
+  uploadBtn.addEventListener('click',    () => csvInput.click());
+  uploadBtn.addEventListener('touchend', (e) => { e.preventDefault(); csvInput.click(); });
+  csvInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => sendMsg({ type: 'upload_waypoints', csv: ev.target.result });
+    reader.readAsText(file);
+    csvInput.value = '';
+  });
+
+  // Nav mode buttons
+  document.getElementById('btn-p2p').addEventListener('click', () => {
+    navMode = 'p2p';
+    document.getElementById('btn-p2p').classList.add('active');
+    document.getElementById('btn-pursuit').classList.remove('active');
+    sendMsg({ type: 'nav_mode', mode: 'p2p' });
+  });
+  document.getElementById('btn-pursuit').addEventListener('click', () => {
+    navMode = 'pure_pursuit';
+    document.getElementById('btn-p2p').classList.remove('active');
+    document.getElementById('btn-pursuit').classList.add('active');
+    sendMsg({ type: 'nav_mode', mode: 'pure_pursuit' });
+  });
+
+  // AUTO start/stop button
+  const autoBtn = document.getElementById('nav-auto-btn');
+  function toggleNav() {
+    if (navActive) sendMsg({ type: 'nav_stop' });
+    else           sendMsg({ type: 'nav_start' });
+  }
+  autoBtn.addEventListener('click', toggleNav);
+  autoBtn.addEventListener('touchend', (e) => { e.preventDefault(); toggleNav(); });
+
+  // FORCE button
+  const forceBtn = document.getElementById('nav-force-btn');
+  forceBtn.addEventListener('click', () => sendMsg({ type: 'nav_start_force' }));
+  forceBtn.addEventListener('touchend', (e) => { e.preventDefault(); sendMsg({ type: 'nav_start_force' }); });
+
+  // Coverage planner modal
+  const covToggleBtn = document.getElementById('cov-toggle-btn');
+  const covModal     = document.getElementById('cov-modal');
+  const covGenBtn    = document.getElementById('cov-gen-btn');
+  const covCloseBtn  = document.getElementById('cov-close-btn');
+
+  function openCovModal()  { covModal.classList.add('visible'); }
+  function closeCovModal() {
+    covModal.classList.remove('visible');
+    document.getElementById('cov-status').textContent = '';
+    document.getElementById('cov-gen-btn').disabled = false;
+  }
+
+  covToggleBtn.addEventListener('click',    openCovModal);
+  covToggleBtn.addEventListener('touchend', (e) => { e.preventDefault(); openCovModal(); });
+  covCloseBtn.addEventListener('click',    closeCovModal);
+  covCloseBtn.addEventListener('touchend', (e) => { e.preventDefault(); closeCovModal(); });
+  covGenBtn.addEventListener('click',    sendGenerateCoverage);
+  covGenBtn.addEventListener('touchend', (e) => { e.preventDefault(); sendGenerateCoverage(); });
 
   // Start WebSocket
   connect();
