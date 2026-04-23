@@ -38,6 +38,9 @@ function connect() {
   ws.onmessage = (evt) => {
     try {
       const msg = JSON.parse(evt.data);
+      console.debug('WS message:', msg);
+      const msgTypeEl = document.getElementById('last-msg-type');
+      if (msgTypeEl) msgTypeEl.textContent = msg.type || 'unknown';
       const handlers = {
         imu:    handleIMU,
         status: handleStatus,
@@ -45,7 +48,9 @@ function connect() {
       };
       const handler = handlers[msg.type];
       if (handler) handler(msg);
-    } catch(e) {}
+    } catch (e) {
+      console.warn('WS message error:', e, evt.data);
+    }
   };
 }
 
@@ -90,8 +95,12 @@ function setStatus(online) {
 // ── IMU HUD update ──────────────────────────────────
 function fmt2(v) { return (v >= 0 ? '+' : '') + v.toFixed(2); }
 
+function safeFixed(v, d) {
+  return (typeof v === 'number' && !Number.isNaN(v)) ? v.toFixed(d) : '--';
+}
+
 function handleIMU(msg) {
-  if (msg.heading !== null && msg.heading !== undefined) {
+  if (typeof msg.heading === 'number' && !Number.isNaN(msg.heading)) {
     const bearing = msg.heading;
     document.getElementById('compass-needle').setAttribute('transform', `rotate(${bearing.toFixed(1)},50,50)`);
     document.getElementById('compass-bearing').textContent  = bearing.toFixed(1) + '°';
@@ -108,16 +117,22 @@ function handleIMU(msg) {
     document.getElementById('compass-cardinal').textContent = cardinal;
   }
 
-  document.getElementById('roll-val').textContent  = (msg.roll !== null) ? fmt2(msg.roll) : '--';
-  document.getElementById('pitch-val').textContent = (msg.pitch !== null) ? fmt2(msg.pitch) : '--';
-  document.getElementById('yaw-val').textContent   = (msg.yaw !== null) ? fmt2(msg.yaw) : '--';
+  document.getElementById('roll-val').textContent  = (typeof msg.roll === 'number' && !Number.isNaN(msg.roll)) ? fmt2(msg.roll) : '--';
+  document.getElementById('pitch-val').textContent = (typeof msg.pitch === 'number' && !Number.isNaN(msg.pitch)) ? fmt2(msg.pitch) : '--';
+  document.getElementById('yaw-val').textContent   = (typeof msg.yaw === 'number' && !Number.isNaN(msg.yaw)) ? fmt2(msg.yaw) : '--';
 }
 
 function handleStatus(msg) {
   const mode = (msg.mode === 'joystick') ? 'JOYSTICK' : (msg.mode === 'heading_follow') ? 'HEADING' : 'P2P';
   document.getElementById('mode-val').textContent = mode;
-  document.getElementById('linear-val').textContent = (msg.linear_vel !== null) ? msg.linear_vel.toFixed(2) : '--';
-  document.getElementById('angular-val').textContent = (msg.angular_vel !== null) ? msg.angular_vel.toFixed(2) : '--';
+  document.getElementById('linear-val').textContent = safeFixed(msg.linear_vel, 2);
+  document.getElementById('angular-val').textContent = safeFixed(msg.angular_vel, 2);
+
+  const targetHeading = (typeof msg.target_heading === 'number' && !Number.isNaN(msg.target_heading)) ? msg.target_heading : null;
+  document.getElementById('heading-target-val').textContent = (targetHeading !== null) ? targetHeading.toFixed(1) + '°' : '--';
+
+  const headingError = (typeof msg.heading_error === 'number' && !Number.isNaN(msg.heading_error)) ? msg.heading_error : null;
+  document.getElementById('heading-error-val').textContent = (headingError !== null) ? fmt2(headingError) + '°' : '--';
 
   const warn = document.getElementById('warn-banner');
   if (msg.watchdog) {

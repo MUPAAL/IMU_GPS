@@ -23,6 +23,7 @@
     <span class="title">PATHFOLLOWER</span>
     <span id="status-dot"></span>
     <span id="status-text">OFFLINE</span>
+    <!-- <span id="last-msg-type" class="tiny-label">--</span> -->
   </div>
 
   <!-- ── Top-left HUD: IMU + Compass ── -->
@@ -65,6 +66,9 @@
     <div class="heading-control-group" style="margin-top:3px;">
       <button id="btn-lock-yaw" class="btn-toggle" title="Lock yaw / show current heading">Lock Yaw</button>
     </div>
+
+    <div class="hud-value"><span class="hud-label">TARGET</span><span class="hud-num" id="heading-target-val">--</span></div>
+    <div class="hud-value"><span class="hud-label">ERR</span><span class="hud-num" id="heading-error-val">--</span></div>
 
     <div class="hud-panel-title" style="margin-top:8px;">ORIENTATION</div>
     <div class="hud-value"><span class="hud-label">ROLL</span><span class="hud-num" id="roll-val">--</span></div>

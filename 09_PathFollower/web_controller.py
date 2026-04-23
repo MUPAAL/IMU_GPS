@@ -159,10 +159,8 @@ class PathFollowerController:
         global _last_linear, _last_angular
 
         # Clamp to limits
-        linear = max(-config.PATHFOLLOWER_MAX_LINEAR_VEL,
-                     min(config.PATHFOLLOWER_MAX_LINEAR_VEL, linear))
-        angular = max(-config.PATHFOLLOWER_MAX_ANGULAR_VEL,
-                      min(config.PATHFOLLOWER_MAX_ANGULAR_VEL, angular))
+        linear = max(-config.PATHFOLLOWER_MAX_LINEAR_VEL, min(config.PATHFOLLOWER_MAX_LINEAR_VEL, linear))
+        angular = max(-config.PATHFOLLOWER_MAX_ANGULAR_VEL, min(config.PATHFOLLOWER_MAX_ANGULAR_VEL, angular))
 
         cmd = f"V{linear:.2f},{angular:.2f}\n".encode()
         with self._ser_lock:
@@ -240,6 +238,7 @@ class PathFollowerController:
         elif msg_type == "set_heading":
             self._last_heartbeat = time.time()
             heading = float(msg.get("heading_deg", 0.0))
+            self._heading_controller.set_mode("p2p")
             self._heading_controller.set_target_heading(heading)
             self._mode = "heading_follow"
             logger.info(f"Target heading set to {heading:.1f}°")
@@ -271,7 +270,7 @@ class PathFollowerController:
 
             # Heading control mode
             if self._mode == "heading_follow" and imu_frame:
-                angular = self._heading_controller.compute(imu_frame.heading, dt)
+                angular = self._heading_controller.compute_p2p(imu_frame.heading, dt)
                 with _vel_lock:
                     linear = _last_linear
                 self._send_velocity(linear, angular)
@@ -343,6 +342,11 @@ class PathFollowerController:
                 if self._mode == "heading_follow"
                 else None
             )
+            target_heading = (
+                self._heading_controller.target_heading
+                if self._mode == "heading_follow"
+                else None
+            )
 
             obj = {
                 "type": "status",
@@ -351,6 +355,7 @@ class PathFollowerController:
                 "linear_vel": lin,
                 "angular_vel": ang,
                 "heading_error": heading_error,
+                "target_heading": target_heading,
             }
             await self._broadcast(obj)
 

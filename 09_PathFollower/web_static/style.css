@@ -102,7 +102,7 @@ html, body {
   border-bottom: 1px solid var(--border);
   border-bottom-right-radius: 6px;
   padding: 6px 8px;
-  pointer-events: none;
+  pointer-events: auto;
   min-width: 118px;
   max-height: calc(100dvh - 48px);
   overflow-y: auto;
@@ -119,7 +119,7 @@ html, body {
   border-bottom: 1px solid var(--border);
   border-bottom-left-radius: 6px;
   padding: 6px 8px;
-  pointer-events: none;
+  pointer-events: auto;
   min-width: 108px;
 }
 
