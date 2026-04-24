@@ -64,6 +64,7 @@ function connect() {
   ws.onmessage = (evt) => {
     try {
       const msg = JSON.parse(evt.data);
+      state_status: handleStateStatus;
       console.debug('WS message:', msg);
       const msgTypeEl = document.getElementById('last-msg-type');
       if (msgTypeEl) msgTypeEl.textContent = msg.type || 'unknown';

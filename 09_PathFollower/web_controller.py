@@ -131,6 +131,9 @@ class PathFollowerController:
         self._watchdog_active = False
         self._mode = "joystick"  # "joystick" or "heading_follow"
 
+        self._auto_active = False
+        self._loop: asyncio.AbstractEventLoop | None = None
+
         # Navigation state machine
         self._nav_state = NavState.IDLE
         self._nav_mode = "p2p"  # "p2p" or "pure_pursuit"
@@ -197,6 +200,60 @@ class PathFollowerController:
             _last_linear = linear
             _last_angular = angular
 
+    def _send_raw(self, data: bytes) -> None:
+        with self._ser_lock:
+            if self._ser is None or not self._ser.is_open:
+                return
+            try:
+                self._ser.write(data)
+            except serial.SerialException as e:
+                logger.error(f"Serial raw write failed: {e}")
+
+    def _start_serial_reader(self) -> None:
+        t = threading.Thread(target=self._serial_reader_thread, name="SerialReader", daemon=True)
+        t.start()
+
+    def _serial_reader_thread(self) -> None:
+        buf = b""
+        while True:
+            try:
+                with self._ser_lock:
+                    if self._ser is None or not self._ser.is_open:
+                        buf = b""
+                        time.sleep(0.1)
+                        continue
+                    n = self._ser.in_waiting
+                    chunk = self._ser.read(n) if n > 0 else b""
+            except serial.SerialException as e:
+                logger.error(f"SerialReader: error: {e}")
+                buf = b""
+                time.sleep(0.1)
+                continue
+            if chunk:
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    self._handle_serial_line(line.strip())
+            else:
+                time.sleep(0.01)
+
+    def _handle_serial_line(self, line: bytes) -> None:
+        if line == b"S:ACTIVE":
+            new_state = True
+        elif line == b"S:READY":
+            new_state = False
+        else:
+            return
+        if self._auto_active == new_state:
+            return
+        self._auto_active = new_state
+        logger.info(f"SerialReader: firmware state → {'ACTIVE' if new_state else 'READY'}")
+        if self._loop is not None:
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast({"type": "state_status", "active": new_state}),
+                self._loop,
+            )
+
     async def _broadcast(self, obj: dict) -> None:
         """Broadcast JSON to all connected WebSocket clients."""
         msg = json.dumps(obj)
@@ -222,7 +279,10 @@ class PathFollowerController:
         logger.info(f"WebSocket client connected: {addr}")
         async with self._clients_lock:
             self._clients.add(websocket)
-
+        try:
+            await websocket.send(json.dumps({"type": "state_status", "active": self._auto_active}))
+        except Exception as e:
+            logger.warning(f"Failed to send state status to client: {e}")
         try:
             async for raw in websocket:
                 self._handle_client_message(raw)
@@ -286,6 +346,10 @@ class PathFollowerController:
 
         elif msg_type == "set_heading_offset":
             self._handle_set_heading_offset(msg)
+        elif msg_type == "toggle_state":
+            self._last_heartbeat = time.time()
+            self._send_raw(b"\r")
+            logger.info("toggle_state → serial \\r")
 
     def _handle_upload_waypoints(self, msg: dict) -> None:
         """Handle waypoint upload from CSV."""
@@ -631,6 +695,8 @@ class PathFollowerController:
             await asyncio.Future()  # run forever
 
     async def run_async(self) -> None:
+        self._loop = asyncio.get_running_loop()   # ← add this line
+        self._start_serial_reader()
         """Run all async tasks concurrently."""
         await asyncio.gather(
             self._run_ws_server(),
