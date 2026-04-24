@@ -13,17 +13,27 @@
   <!-- ── Fullscreen joystick (base layer z-index:0) ── -->
   <div id="joystick-zone">
     <span id="joystick-hint">TOUCH TO CONTROL</span>
+    <!-- AUTO MODE overlay -->
+    <div id="auto-overlay">
+      <div id="auto-overlay-text">AUTO MODE</div>
+      <div id="auto-overlay-sub">JOYSTICK DISABLED</div>
+    </div>
   </div>
 
   <!-- Warning banner (below top bar, z-index:20) -->
   <div id="warn-banner">⚠ WATCHDOG TIMEOUT — MOTORS STOPPED</div>
 
   <!-- ── Top bar ── -->
-  <div id="top-bar">
-    <span class="title">PATHFOLLOWER</span>
+<div id="top-bar">
+    <span class="title">FARMBOT</span>
     <span id="status-dot"></span>
     <span id="status-text">OFFLINE</span>
-    <!-- <span id="last-msg-type" class="tiny-label">--</span> -->
+    <button id="state-btn" class="state-ready" disabled>
+      <span id="state-indicator">●</span>
+      <span id="state-label">ACTIVATE</span>
+    </button>
+    <button id="rec-btn" class="rec-idle">● REC</button>
+    <span id="rec-filename">—</span>
   </div>
 
   <!-- ── Top-left HUD: IMU + Compass ── -->

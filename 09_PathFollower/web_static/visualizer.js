@@ -16,6 +16,19 @@ let currentForce   = 0.0;
 let heartbeatTimer = null;
 let joySendTimer   = null;
 let yawLocked = false;
+let controlStateActive = false;
+
+function updateStateBtn() {
+  const btn = document.getElementById('state-btn');
+  const lbl = document.getElementById('state-label');
+  if (controlStateActive) {
+    btn.className = 'state-active';
+    lbl.textContent = 'DEACTIVATE';
+  } else {
+    btn.className = 'state-ready';
+    lbl.textContent = 'ACTIVATE';
+  }
+}
 
 // ── Navigation state ────────────────────────────────────────
 let speedRatio = 0.5;
