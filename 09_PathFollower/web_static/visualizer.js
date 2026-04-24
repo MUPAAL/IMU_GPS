@@ -16,7 +16,9 @@ let currentForce   = 0.0;
 let heartbeatTimer = null;
 let joySendTimer   = null;
 let yawLocked = false;
+
 let controlStateActive = false;
+let navActive = false;
 
 function toggleControlState() {
   sendMsg({ type: "toggle_state" });
@@ -227,9 +229,32 @@ function handleNavStatus(msg) {
     autoBtn.className = 'nav-idle';   autoBtn.textContent = '▶ AUTO';
   }
 
+  const statusPanel = document.getElementById('nav-status-panel');
+  if (navActive || state === 'finished') {
+    statusPanel.classList.add('visible');
+  } else {
+    statusPanel.classList.remove('visible');
+  }
+
   const overlay = document.getElementById('auto-overlay');
   if (navActive) { overlay.classList.add('visible'); }
   else           { overlay.classList.remove('visible'); }
+
+  const prog = msg.progress || [0, 0];
+  const headingDeg = (msg.heading_deg != null) ? msg.heading_deg : msg.target_bearing;
+  const headingDir = (msg.heading_dir != null) ? msg.heading_dir : null;
+  document.getElementById('nav-progress').textContent    = prog[0] + ' / ' + prog[1];
+  document.getElementById('nav-dist').textContent        = (msg.distance_m     != null) ? msg.distance_m.toFixed(1)     : '--';
+  document.getElementById('nav-bearing').textContent     = (headingDeg          != null) ? headingDeg.toFixed(0) + '°'          : '--';
+  document.getElementById('nav-mode-disp').textContent   = (msg.nav_mode    || '--').toUpperCase();
+  document.getElementById('nav-filter-disp').textContent = (msg.filter_mode || '--').toUpperCase();
+  document.getElementById('nav-tol').textContent         = (msg.tolerance_m != null) ? msg.tolerance_m.toFixed(1) : '--';
+
+  // Update heading display
+  if (headingDeg != null) {
+    document.getElementById('nav-heading').textContent  = headingDeg.toFixed(1) + '°';
+    document.getElementById('nav-cardinal').textContent = headingDir || bearingToCardinal(headingDeg);
+  }
 }
 
 function handleNavComplete(msg) {
@@ -237,6 +262,19 @@ function handleNavComplete(msg) {
   document.getElementById('auto-overlay').classList.remove('visible');
   document.getElementById('nav-auto-btn').className   = 'nav-idle';
   document.getElementById('nav-auto-btn').textContent = '▶ AUTO';
+  document.getElementById('nav-status-panel').classList.add('visible');
+
+}
+
+function handleNavWarning(msg) {
+  const warn = document.getElementById('warn-banner');
+  warn.textContent = '⚠ ' + (msg.msg || 'Navigation warning').toUpperCase();
+  warn.classList.add('visible');
+  setTimeout(() => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    warn.classList.remove('visible');
+    warn.textContent = '⚠ CONNECTION LOST — ROBOT STOPPED';
+  }, 5000);
 }
 
 function handleCoverageReady(msg) {
@@ -318,6 +356,14 @@ function dirLabel(linear, angular) {
   if (right) s += '→';
   return s;
 }
+
+function updateJoyUI() {
+  document.getElementById('joy-force').textContent   = currentForce.toFixed(2);
+  document.getElementById('joy-linear').textContent  = fmt2(currentLinear)  + ' m/s';
+  document.getElementById('joy-angular').textContent = fmt2(currentAngular) + ' r/s';
+  document.getElementById('joy-dir').textContent     = dirLabel(currentLinear, currentAngular);
+}
+
 
 // ── Joystick update ──────────────────────────────────
 function updateJoyUI() {

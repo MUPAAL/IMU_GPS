@@ -57,6 +57,25 @@ html, body {
 .nipple .front { background: var(--accent) !important; }
 .nipple .back  { background: rgba(0,212,255,0.15) !important; border: 2px solid var(--accent-dim) !important; }
 
+/* AUTO MODE joystick overlay */
+#auto-overlay {
+  display: none;
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.7);
+  align-items: center; justify-content: center;
+  flex-direction: column; gap: 6px;
+  z-index: 5;
+  pointer-events: all;
+  touch-action: none;
+}
+#auto-overlay.visible { display: flex; }
+#auto-overlay-text {
+  color: var(--green); font-size: 16px; font-weight: bold;
+  letter-spacing: 3px;
+  text-shadow: 0 0 12px var(--green);
+}
+#auto-overlay-sub { color: var(--dim); font-size: 11px; letter-spacing: 1px; }
+
 /* ── Warning banner (below top-bar, z-index: 20) ── */
 #warn-banner {
   display: none;
@@ -91,6 +110,35 @@ html, body {
 #status-dot.offline { background: var(--red); }
 #status-text { font-size: 10px; color: var(--dim); white-space: nowrap; }
 
+/* State toggle button — compact for top-bar */
+#state-btn {
+  flex: 1;
+  padding: 5px 8px;
+  border: none; outline: none;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 11px; font-weight: bold; letter-spacing: 1.5px;
+  cursor: pointer; border-radius: 3px;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  transition: background 0.2s;
+  white-space: nowrap; min-width: 0;
+}
+#state-btn.state-ready  { background: rgba(255,64,96,0.15);  color: var(--red);   border: 1px solid var(--red); }
+#state-btn.state-active { background: rgba(0,255,136,0.12); color: var(--green); border: 1px solid var(--green); box-shadow: 0 0 6px rgba(0,255,136,0.2); }
+#state-btn:disabled     { opacity: 0.4; cursor: not-allowed; }
+
+/* Record button — compact */
+#rec-btn {
+  padding: 5px 10px;
+  border: none; outline: none;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 11px; font-weight: bold; letter-spacing: 1px;
+  cursor: pointer; border-radius: 3px;
+  transition: background 0.2s; white-space: nowrap; flex-shrink: 0;
+}
+#rec-btn.rec-idle   { background: #1e2d3d; color: var(--dim);  border: 1px solid var(--border); }
+#rec-btn.rec-active { background: #2a0808; color: var(--red);  border: 1px solid var(--red); box-shadow: 0 0 5px rgba(255,64,96,0.3); }
+#rec-filename { color: var(--dim); font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80px; }
+
 /* ── Left HUD panel: IMU + Compass ── */
 #hud-left {
   position: absolute;
@@ -102,10 +150,8 @@ html, body {
   border-bottom: 1px solid var(--border);
   border-bottom-right-radius: 6px;
   padding: 6px 8px;
-  pointer-events: auto;
+  pointer-events: none;
   min-width: 118px;
-  max-height: calc(100dvh - 48px);
-  overflow-y: auto;
 }
 
 /* ── Right HUD panel: RTK GPS ── */
@@ -119,7 +165,7 @@ html, body {
   border-bottom: 1px solid var(--border);
   border-bottom-left-radius: 6px;
   padding: 6px 8px;
-  pointer-events: auto;
+  pointer-events: none;
   min-width: 108px;
 }
 
@@ -139,61 +185,11 @@ html, body {
 #compass-svg { width: 64px; height: 64px; }
 #compass-bearing { color: var(--accent); font-size: 14px; font-weight: bold; }
 #compass-cardinal { color: var(--text); font-size: 10px; }
-
-/* Heading Control */
-.heading-control-group {
-  display: flex;
-  gap: 3px;
-  align-items: center;
-  margin: 2px 0;
-}
-
-.heading-control-group input {
-  width: 45px;
-  padding: 2px 4px;
-  background: rgba(0,0,0,0.3);
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  color: var(--accent);
-  font-family: 'Courier New', monospace;
-  font-size: 10px;
-  text-align: center;
-}
-
-.heading-control-group .unit {
-  color: var(--dim);
-  font-size: 9px;
-  margin-right: 2px;
-}
-
-.heading-control-group button {
-  padding: 2px 6px;
-  background: rgba(0,212,255,0.12);
-  border: 1px solid var(--accent);
-  border-radius: 2px;
-  color: var(--accent);
-  font-family: 'Courier New', monospace;
-  font-size: 9px;
-  cursor: pointer;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.heading-control-group button:hover {
-  background: rgba(0,212,255,0.22);
-}
-
-.btn-toggle {
-  background: #1e2d3d;
-  border-color: var(--border);
-  color: var(--dim);
-}
-
-.btn-toggle.active {
-  background: rgba(0,212,255,0.12);
-  border-color: var(--accent);
-  color: var(--accent);
-}
+#compass-accuracy { font-size: 9px; letter-spacing: 0.5px; }
+#compass-accuracy.acc-0 { color: var(--red); }
+#compass-accuracy.acc-1 { color: var(--warn); }
+#compass-accuracy.acc-2 { color: var(--green); }
+#compass-accuracy.acc-3 { color: var(--green); text-shadow: 0 0 4px var(--green); }
 
 /* RTK in hud-right */
 #rtk-header {
@@ -215,25 +211,31 @@ html, body {
 .rtk-cell-label { color: var(--dim); font-size: 8px; letter-spacing: 0.5px; }
 .rtk-cell-val   { color: var(--text); font-size: 10px; }
 .rtk-cell-val.accent { color: var(--accent); }
+#rtk-sats-row { display: flex; gap: 6px; }
 
-/* AUTO MODE joystick overlay */
-#auto-overlay {
+/* ── Nav status panel (center-top floating, nav only) ── */
+#nav-status-panel {
   display: none;
-  position: absolute; inset: 0;
-  background: rgba(0,0,0,0.7);
-  align-items: center; justify-content: center;
-  flex-direction: column; gap: 6px;
-  z-index: 5;
-  pointer-events: all;
-  touch-action: none;
+  position: absolute;
+  top: 48px; left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  background: rgba(13, 26, 16, 0.92);
+  border: 1px solid #1e3d28;
+  border-top: none;
+  backdrop-filter: blur(6px);
+  padding: 5px 10px;
+  pointer-events: none;
+  border-bottom-left-radius: 6px;
+  border-bottom-right-radius: 6px;
+  min-width: 190px;
 }
-#auto-overlay.visible { display: flex; }
-#auto-overlay-text {
-  color: var(--green); font-size: 16px; font-weight: bold;
-  letter-spacing: 3px;
-  text-shadow: 0 0 12px var(--green);
-}
-#auto-overlay-sub { color: var(--dim); font-size: 11px; letter-spacing: 1px; }
+#nav-status-panel.visible { display: block; }
+#nav-status-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 2px 6px; }
+.nav-cell { display: flex; flex-direction: column; }
+.nav-cell-label { color: #5a8070; font-size: 8px; letter-spacing: 0.5px; }
+.nav-cell-val   { color: var(--text); font-size: 10px; }
+.nav-cell-val.green { color: var(--green); }
 
 /* ── Bottom bar: speed + nav controls ── */
 #bottom-bar {
@@ -284,6 +286,10 @@ html, body {
 }
 #nav-auto-btn.nav-idle   { background: #1e2d3d; color: var(--dim);   border: 1px solid var(--border); }
 #nav-auto-btn.nav-active { background: #0a1a0e; color: var(--green); border: 1px solid var(--green); box-shadow: 0 0 5px rgba(0,255,136,0.3); }
+
+/* Hidden elements */
+#csv-file-input  { display: none; }
+#joy-data-hidden { display: none; }
 
 /* ── Coverage path planner modal ── */
 #cov-modal {
@@ -392,6 +398,59 @@ html, body {
 }
 #cov-close-btn:hover { border-color: var(--accent); color: var(--accent); }
 
-/* Hidden elements */
-#csv-file-input  { display: none; }
-#joy-data-hidden { display: none; }
+
+
+/* Heading Control */
+.heading-control-group {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  margin: 2px 0;
+}
+
+.heading-control-group input {
+  width: 45px;
+  padding: 2px 4px;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  color: var(--accent);
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  text-align: center;
+}
+
+.heading-control-group .unit {
+  color: var(--dim);
+  font-size: 9px;
+  margin-right: 2px;
+}
+
+.heading-control-group button {
+  padding: 2px 6px;
+  background: rgba(0,212,255,0.12);
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  color: var(--accent);
+  font-family: 'Courier New', monospace;
+  font-size: 9px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.heading-control-group button:hover {
+  background: rgba(0,212,255,0.22);
+}
+
+.btn-toggle {
+  background: #1e2d3d;
+  border-color: var(--border);
+  color: var(--dim);
+}
+
+.btn-toggle.active {
+  background: rgba(0,212,255,0.12);
+  border-color: var(--accent);
+  color: var(--accent);
+}
