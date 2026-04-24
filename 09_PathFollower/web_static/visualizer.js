@@ -18,6 +18,11 @@ let joySendTimer   = null;
 let yawLocked = false;
 let controlStateActive = false;
 
+function toggleControlState() {
+  sendMsg({ type: "toggle_state" });
+  document.getElementById('state-btn').disabled = true;
+}
+
 function updateStateBtn() {
   const btn = document.getElementById('state-btn');
   const lbl = document.getElementById('state-label');
@@ -104,6 +109,8 @@ function setStatus(online) {
   const dot  = document.getElementById('status-dot');
   const text = document.getElementById('status-text');
   const warn = document.getElementById('warn-banner');
+  const btn  = document.getElementById('state-btn');
+
   if (online) {
     dot.className = 'online';
     text.textContent = 'ONLINE';
@@ -188,6 +195,13 @@ function handleRTK(msg) {
   document.getElementById('rtk-lon').textContent  = fmtCoord(msg.lon, 7);
   document.getElementById('rtk-alt').textContent  = fmtCoord(msg.alt, 2);
   document.getElementById('rtk-sats').textContent = (msg.num_sats !== null && msg.num_sats !== undefined) ? msg.num_sats : '--';
+}
+
+// ── State status ─────────────────────────────────────────────
+function handleStateStatus(msg) {
+  controlStateActive = msg.active;
+  updateStateBtn();
+  document.getElementById('state-btn').disabled = false;
 }
 
 // ── Navigation handlers ──────────────────────────────────────
@@ -376,6 +390,11 @@ window.addEventListener('load', () => {
     lockYawBtn.classList.toggle('active', yawLocked);
   });
   lockYawBtn.addEventListener('touchend', (e) => { e.preventDefault(); lockYawBtn.click(); });
+
+  // State button
+  const stateBtn = document.getElementById('state-btn');
+  stateBtn.addEventListener('click', toggleControlState);
+  stateBtn.addEventListener('touchend', (e) => { e.preventDefault(); toggleControlState(); });
 
   // Speed slider
   const speedSlider = document.getElementById('speed-slider');
