@@ -65,7 +65,7 @@ ROBOT_NAV_WS           = "ws://localhost:8786"     # nav_bridge WebSocket URL
 AUTONAV_WS_PORT         = 8805                      # HTTP port; WebSocket = AUTONAV_WS_PORT + 1
 AUTONAV_IMU_WS          = "ws://localhost:8766"     # imu_bridge WebSocket URL
 AUTONAV_RTK_WS          = "ws://localhost:8776"     # rtk_bridge WebSocket URL
-AUTONAV_ROBOT_WS        = "ws://localhost:8796"     # robot_bridge WebSocket URL
+AUTONAV_ROBOT_WS        = "ws://localhost:8889"     # robot_bridge WebSocket URL
 AUTONAV_MAX_LINEAR_VEL  = 1.0                       # Max linear velocity (m/s)
 AUTONAV_MAX_ANGULAR_VEL = 1.0                       # Max angular velocity (rad/s)
 AUTONAV_PID_KP          = 0.8                       # PID proportional gain
