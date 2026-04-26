@@ -39,7 +39,6 @@ function updateStateBtn() {
 
 // ── Navigation state ────────────────────────────────────────
 let speedRatio = 0.5;
-let navActive  = false;
 let navWpCount = 0;
 let navMode    = "p2p";
 
