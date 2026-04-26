@@ -64,7 +64,6 @@ function connect() {
   ws.onmessage = (evt) => {
     try {
       const msg = JSON.parse(evt.data);
-      state_status: handleStateStatus;
       console.debug('WS message:', msg);
       const msgTypeEl = document.getElementById('last-msg-type');
       if (msgTypeEl) msgTypeEl.textContent = msg.type || 'unknown';
@@ -73,6 +72,7 @@ function connect() {
         status:           handleStatus,
         rtk:              handleRTK,
         waypoints_loaded: handleWaypointsLoaded,
+        state_status:     handleStateStatus,
         nav_status:       handleNavStatus,
         nav_complete:     handleNavComplete,
         coverage_ready:   handleCoverageReady,
