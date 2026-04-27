@@ -52,16 +52,10 @@ SCRIPT_OPEN_BROWSER = None
 
 # ── LOGGING ────────────────────────────────────────────────────────────────────
 
-_py_name = Path(__file__).stem
-log_file_name = Path(__file__).parent / f"{_py_name}.log"
-
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler(log_file_name, encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
+    handlers=[logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
 
@@ -246,7 +240,6 @@ class SerialReader:
                 time.sleep(self.RECONNECT_DELAY)
                 continue
 
-            logger.info("SerialReader: port opened: %s @ %d baud", self._port, self._baud)
             try:
                 while True:
                     try:
@@ -268,7 +261,6 @@ class SerialReader:
                     ser.close()
                 except Exception:
                     pass
-                logger.info("SerialReader: port closed, reconnecting in %.0fs", self.RECONNECT_DELAY)
                 time.sleep(self.RECONNECT_DELAY)
 
 
@@ -294,7 +286,7 @@ class BroadcastLoop:
             try:
                 self._queue.put_nowait(msg)
             except asyncio.QueueFull:
-                logger.debug("BroadcastLoop: queue full, dropping frame")
+                logger.warning("BroadcastLoop: queue full, dropping frame")
             await asyncio.sleep(self._period)
 
 
@@ -308,8 +300,6 @@ class WebSocketServer:
         self._lock    = asyncio.Lock()
 
     async def handle_client(self, websocket) -> None:
-        addr = websocket.remote_address
-        logger.info("WebSocket client connected: %s", addr)
         async with self._lock:
             self._clients.add(websocket)
         try:
@@ -318,7 +308,6 @@ class WebSocketServer:
         finally:
             async with self._lock:
                 self._clients.discard(websocket)
-            logger.info("WebSocket client disconnected: %s", addr)
 
     async def broadcast(self) -> None:
         while True:
@@ -341,7 +330,6 @@ class WebSocketServer:
 
     async def serve(self) -> None:
         async with websockets.serve(self.handle_client, "0.0.0.0", self._port):
-            logger.info("WebSocket server listening on ws://localhost:%d", self._port)
             await self.broadcast()
 
 
@@ -364,12 +352,11 @@ class HttpFileServer:
                 super().__init__(*args, directory=str(static_dir), **kwargs)
 
             def log_message(self, format, *args):
-                logger.debug("HTTP %s - %s", self.address_string(), format % args)
+                pass
 
         socketserver.TCPServer.allow_reuse_address = True
         try:
             with socketserver.TCPServer(("", self._port), _Handler) as httpd:
-                logger.info("HTTP server serving %s on port %d", self._static_dir, self._port)
                 httpd.serve_forever()
         except Exception as e:
             logger.error("HttpFileServer: failed to start on port %d: %s", self._port, e)
@@ -404,10 +391,6 @@ class RTKBridge:
         else:
             HttpFileServer(self._static_dir, self._http_port).start()
 
-        logger.info("RTK bridge | port=%s | HTTP=:%d  WebSocket=:%d  broadcast=%.1f Hz",
-                    self._serial_port, self._http_port, self._ws_port, self._hz)
-        logger.info("Open browser at http://localhost:%d", self._http_port)
-
         if self._open_browser:
             url = f"http://localhost:{self._http_port}"
             threading.Timer(1.0, lambda: webbrowser.open(url)).start()
@@ -415,7 +398,7 @@ class RTKBridge:
         try:
             asyncio.run(self._run_async(pipeline))
         except KeyboardInterrupt:
-            logger.info("RTKBridge: stopped by user.")
+            logger.warning("RTKBridge: interrupted, shutting down")
 
     async def _run_async(self, pipeline: NMEAPipeline) -> None:
         queue     = asyncio.Queue(maxsize=10)

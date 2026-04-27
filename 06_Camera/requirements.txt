@@ -1,4 +1,0 @@
-websockets>=12.0
-depthai
-opencv-python
-numpy

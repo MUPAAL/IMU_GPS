@@ -6,8 +6,7 @@ const STRINGS = {
   connected: 'Connected',
   reconnecting: 'Disconnected, reconnecting in 3s',
   csvLabel: 'CSV Route File',
-  rtkSource: 'RTK Source',
-  findMe: 'Find Me',
+findMe: 'Find Me',
   centerCurrent: 'Center Current',
   editRoute: 'Edit Route',
   doneEdit: 'Finish Edit',
@@ -143,8 +142,6 @@ const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const pageTitle = document.getElementById('pageTitle');
 const csvLabel = document.getElementById('csvLabel');
-const rtkSourceLabel = document.getElementById('rtkSourceLabel');
-const rtkSourceSelect = document.getElementById('rtkSourceSelect');
 const csvFile = document.getElementById('csvFile');
 const btnFindMe = document.getElementById('btnFindMe');
 const btnCenterCurrent = document.getElementById('btnCenterCurrent');
@@ -176,7 +173,6 @@ const baselineVal = document.getElementById('baselineVal');
 const dualRtkInfo = document.getElementById('dualRtkInfo');
 
 let liveSocket = null;
-let sourceSignature = '';
 let currentMarker = L.circleMarker(DEFAULT_POS, {
   radius: 8,
   color: '#073b4c',
@@ -711,37 +707,6 @@ function updateByFrame(frame) {
   }
 }
 
-function syncSourceSelector(frame) {
-  if (!rtkSourceSelect) return;
-
-  const sources = Array.isArray(frame.rtk_sources) ? frame.rtk_sources : [];
-  const activeSource = frame.rtk_active_source || frame.rtk_source || '';
-  const signature = sources
-    .map((s) => [s.source_id, s.label, s.connected ? '1' : '0', s.last_error || ''].join(':'))
-    .join('|')
-    + `::${activeSource}`;
-
-  if (signature !== sourceSignature) {
-    sourceSignature = signature;
-    rtkSourceSelect.innerHTML = '';
-    sources.forEach((source) => {
-      const option = document.createElement('option');
-      option.value = source.source_id;
-      option.textContent = source.label + (source.connected ? '' : ' (offline)');
-      rtkSourceSelect.appendChild(option);
-    });
-  }
-
-  const hasMultipleSources = sources.length > 1;
-  rtkSourceSelect.disabled = !hasMultipleSources;
-  if (activeSource && rtkSourceSelect.value !== activeSource) {
-    rtkSourceSelect.value = activeSource;
-  }
-
-  if (!hasMultipleSources && sources.length === 1) {
-    rtkSourceSelect.value = sources[0].source_id;
-  }
-}
 
 function connectWebSocket() {
   const ws = new WebSocket(WS_URL);
@@ -758,8 +723,7 @@ function connectWebSocket() {
     try {
       if (simTimer) return;
       const frame = JSON.parse(event.data);
-      syncSourceSelector(frame);
-      pushFrame(frame);
+pushFrame(frame);
     } catch (err) {
       console.error(err);
     }
@@ -919,16 +883,6 @@ function centerToCurrent() {
   addEvent(t('centered', { lat: p.lat.toFixed(7), lon: p.lng.toFixed(7) }), '#1b6c8d');
 }
 
-if (rtkSourceSelect) {
-  rtkSourceSelect.addEventListener('change', () => {
-    const source = rtkSourceSelect.value;
-    if (!source) return;
-    if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
-      liveSocket.send(JSON.stringify({ type: 'set_active_source', source }));
-      addEvent(`Active RTK switched to ${source}`, '#1b6c8d');
-    }
-  });
-}
 
 csvFile.addEventListener('change', async (ev) => {
   const file = ev.target.files?.[0];

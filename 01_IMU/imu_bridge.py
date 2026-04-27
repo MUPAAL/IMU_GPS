@@ -46,18 +46,10 @@ DEFAULT_NORTH_OFFSET = _cfg.IMU_NORTH_OFFSET if _cfg else 0.0
 
 # ── Logger setup ─────────────────────────────────────────────────────────────
 def _setup_logger() -> logging.Logger:
-    """Configure module-level logger; output to imu_bridge.log and stderr."""
-    py_name = Path(__file__).stem
-    output_path = Path(__file__).parent
-    log_file = output_path / f"{py_name}.log"
-
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARNING,
         format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, encoding="utf-8"),
-            logging.StreamHandler(),
-        ],
+        handlers=[logging.StreamHandler()],
     )
     return logging.getLogger(__name__)
 
@@ -171,7 +163,6 @@ class IMUPipeline:
     @north_offset_deg.setter
     def north_offset_deg(self, value: float) -> None:
         self._north_offset_deg = value
-        logger.info(f"North offset updated to {value:.2f} deg")
 
     # ── Public entry point ────────────────────────────────────────────────────
 
@@ -413,11 +404,9 @@ class SerialReader:
 
     def run(self) -> None:
         """Entry point for the serial reader thread."""
-        logger.info(f"Opening serial port {self._port} at {self._baud} baud.")
         while True:
             try:
                 with serial.Serial(self._port, self._baud, timeout=1.0) as ser:
-                    logger.info(f"Serial port {self._port} opened successfully.")
                     self._read_loop(ser)
             except serial.SerialException as exc:
                 logger.error(
@@ -511,7 +500,6 @@ class WebSocketServer:
     async def handle_client(self, websocket) -> None:
         """Handle a single WebSocket client connection lifecycle."""
         addr = websocket.remote_address
-        logger.info(f"WebSocket client connected: {addr}")
         self._clients.add(websocket)
         try:
             async for raw in websocket:
@@ -521,19 +509,16 @@ class WebSocketServer:
                     except Exception as exc:
                         logger.warning(f"Error handling client message from {addr}: {exc}")
         except websockets.exceptions.ConnectionClosed:
-            logger.debug(f"WebSocket connection closed normally for {addr}.")
+            pass
         except Exception as exc:
             logger.warning(f"WebSocket handler error for {addr}: {exc}")
         finally:
             self._clients.discard(websocket)
-            logger.info(f"WebSocket client disconnected: {addr}")
 
     async def serve(self) -> None:
         """Start the WebSocket server and the broadcast coroutine."""
-        logger.info(f"Starting WebSocket server on ws://localhost:{self._port}")
         asyncio.create_task(self.broadcast())
         async with websockets.serve(self.handle_client, "0.0.0.0", self._port):
-            logger.info("WebSocket server running.")
             await asyncio.Future()  # run forever
 
 
@@ -556,14 +541,11 @@ class HttpFileServer:
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, directory=str(static_dir), **kwargs)
 
-            def log_message(self, fmt, *args):  # suppress default stderr noise
-                logger.debug(f"HTTP {self.address_string()} - " + fmt % args)
+            def log_message(self, fmt, *args):
+                pass
 
         socketserver.TCPServer.allow_reuse_address = True
         with socketserver.TCPServer(("", self._port), _Handler) as httpd:
-            logger.info(
-                f"HTTP server serving {self._static_dir} on port {self._port}"
-            )
             httpd.serve_forever()
 
 
@@ -597,14 +579,10 @@ class IMUBridge:
 
     def run(self) -> None:
         """Synchronous entry point — blocks until Ctrl-C."""
-        logger.info(
-            f"Starting BNO085 bridge | serial={self._serial_port}@{self._baud} "
-            f"| http=:{self._http_port} | ws=:{self._ws_port}"
-        )
         try:
             asyncio.run(self._run_async())
         except KeyboardInterrupt:
-            logger.info("Bridge stopped by user.")
+            pass
 
     async def _run_async(self) -> None:
         loop = asyncio.get_running_loop()
@@ -628,10 +606,7 @@ class IMUBridge:
 
         # -- HTTP static file server thread ------------------------------------
         if not self._static_dir.exists():
-            logger.warning(
-                f"web_static directory not found at {self._static_dir}; "
-                "HTTP server not started."
-            )
+            logger.warning(f"web_static directory not found at {self._static_dir}; HTTP server not started.")
         else:
             http_server = HttpFileServer(self._static_dir, self._http_port)
             threading.Thread(
@@ -640,7 +615,6 @@ class IMUBridge:
 
         # -- Open browser after short delay ------------------------------------
         url = f"http://localhost:{self._http_port}"
-        logger.info(f"Open browser at {url}")
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 
         # -- WebSocket server (runs forever in event loop) ---------------------
