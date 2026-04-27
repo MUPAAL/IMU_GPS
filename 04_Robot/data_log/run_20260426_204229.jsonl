@@ -1,0 +1,13 @@
+{"type": "imu", "rec_ts": 1777254149.143806, "heading_deg": 319.26, "heading_dir": "NW", "roll": -0.56, "pitch": 2.1, "yaw": 330.21}
+{"type": "odom", "rec_ts": 1777254149.156281, "v": 0.0, "w": 0.0, "soc": 67, "state": 2}
+{"type": "rtk", "rec_ts": 1777254149.336637, "lat": 38.9412928598587, "lon": -92.31884600793728, "fix_quality": 0, "num_sats": 0}
+{"type": "imu", "rec_ts": 1777254150.158946, "heading_deg": 319.26, "heading_dir": "NW", "roll": -0.45, "pitch": 2.13, "yaw": 330.21}
+{"type": "odom", "rec_ts": 1777254150.179677, "v": 0.0, "w": 0.0, "soc": 67, "state": 2}
+{"type": "rtk", "rec_ts": 1777254150.34336, "lat": 38.9412928598587, "lon": -92.31884600793728, "fix_quality": 0, "num_sats": 0}
+{"type": "imu", "rec_ts": 1777254151.159712, "heading_deg": 319.258, "heading_dir": "NW", "roll": -0.45, "pitch": 2.13, "yaw": 330.21}
+{"type": "odom", "rec_ts": 1777254151.201597, "v": 0.0, "w": 0.0, "soc": 67, "state": 2}
+{"type": "rtk", "rec_ts": 1777254151.348062, "lat": 38.9412928598587, "lon": -92.31884600793728, "fix_quality": 0, "num_sats": 0}
+{"type": "imu", "rec_ts": 1777254152.173671, "heading_deg": 319.258, "heading_dir": "NW", "roll": -0.45, "pitch": 2.13, "yaw": 330.21}
+{"type": "odom", "rec_ts": 1777254152.223188, "v": 0.0, "w": 0.0, "soc": 67, "state": 2}
+{"type": "rtk", "rec_ts": 1777254152.353714, "lat": 38.9412928598587, "lon": -92.31884600793728, "fix_quality": 0, "num_sats": 0}
+{"type": "imu", "rec_ts": 1777254153.182826, "heading_deg": 319.26, "heading_dir": "NW", "roll": -0.45, "pitch": 2.13, "yaw": 330.21}

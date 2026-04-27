@@ -71,7 +71,7 @@ GPS_TIMEOUT_S       = _cfg.AUTONAV_GPS_TIMEOUT_S      if _cfg else 5.0
 MA_WINDOW           = _cfg.AUTONAV_MA_WINDOW          if _cfg else 10
 REACH_TOLERANCE_M   = 1.5                             # waypoint arrival radius (m)
 
-CONTROL_HZ          = 10.0                            # navigation loop frequency
+CONTROL_HZ          = _cfg.AUTONAV_CONTROL_HZ         if _cfg else 5.0
 HEARTBEAT_INTERVAL  = 1.0                             # seconds between idle heartbeats
 
 # angular sign: +1 = positive error → positive angular (robot turns left/CCW).
@@ -596,7 +596,8 @@ class RtkWsClient:
                             data = json.loads(msg)
                             with self._lock:
                                 self._latest = data
-                                self._last_ts = time.monotonic()
+                                if data.get("fix_quality", 0) > 0:
+                                    self._last_ts = time.monotonic()
                         except json.JSONDecodeError as exc:
                             logger.warning("RtkWsClient: JSON error: %s", exc)
             except Exception as exc:
@@ -790,8 +791,9 @@ class AutoNavLoop:
             if lon is not None:
                 lon = float(lon)
 
-            imu_ts = self._imu.last_ts or time.monotonic()
-            gps_ts = self._rtk.last_ts or time.monotonic()
+            now = time.monotonic()
+            imu_ts = self._imu.last_ts if self._imu.last_ts > 0 else now - 9999
+            gps_ts = self._rtk.last_ts if self._rtk.last_ts > 0 else now - 9999
 
             snapshot = SensorSnapshot(
                 heading_deg=heading_deg,
@@ -848,8 +850,7 @@ class AutoNavBridge:
         if static_dir.exists():
             http_server = HttpFileServer(static_dir, HTTP_PORT)
             threading.Thread(target=http_server.run, daemon=True, name="http").start()
-        else:
-            logger.info("No web_static directory — HTTP server skipped.")
+            threading.Timer(1.0, lambda: webbrowser.open(f"http://localhost:{HTTP_PORT}")).start()
 
         try:
             asyncio.run(self._run_async())

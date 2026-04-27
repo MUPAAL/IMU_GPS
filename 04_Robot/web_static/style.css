@@ -137,7 +137,7 @@ html, body {
 }
 #rec-btn.rec-idle   { background: #1e2d3d; color: var(--dim);  border: 1px solid var(--border); }
 #rec-btn.rec-active { background: #2a0808; color: var(--red);  border: 1px solid var(--red); box-shadow: 0 0 5px rgba(255,64,96,0.3); }
-#rec-filename { color: var(--dim); font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80px; }
+#rec-filename { color: var(--dim); font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
 
 /* ── Left HUD panel: IMU + Compass ── */
 #hud-left {

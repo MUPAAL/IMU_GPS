@@ -26,7 +26,7 @@ let heartbeatTimer = null;
 let joySendTimer   = null;
 
 let controlStateActive = false;
-let navActive = false;
+let isRecording = false;
 
 function toggleControlState() {
   sendMsg({ type: "toggle_state" });
@@ -42,6 +42,23 @@ function updateStateBtn() {
   } else {
     btn.className = 'state-ready';
     lbl.textContent = 'ACTIVATE';
+  }
+}
+
+function toggleRecording() {
+  sendMsg({ type: "set_recording", enabled: !isRecording });
+}
+
+function handleRecStatus(msg) {
+  isRecording = msg.recording;
+  const btn      = document.getElementById('rec-btn');
+  const filename = document.getElementById('rec-filename');
+  if (isRecording) {
+    btn.className   = 'rec-active';
+    filename.textContent = msg.filename;
+  } else {
+    btn.className   = 'rec-idle';
+    filename.textContent = '—';
   }
 }
 
@@ -71,9 +88,7 @@ function connect() {
         rtk:          handleRTK,
         odom:         handleOdom,
         state_status: handleStateStatus,
-        nav_status:   handleNavStatus,
-        nav_complete: handleNavComplete,
-        nav_warning:  handleNavWarning,
+        rec_status:   handleRecStatus,
       };
       const handler = handlers[msg.type];
       if (handler) handler(msg);
@@ -92,7 +107,7 @@ function scheduleHeartbeat() {
 
 function scheduleJoySend() {
   joySendTimer = setInterval(() => {
-    if (joystickActive && !navActive) {
+    if (joystickActive) {
       sendMsg({ type: "joystick", linear: currentLinear, angular: currentAngular, force: currentForce });
     }
   }, JOYSTICK_SEND_INTERVAL_MS);
@@ -123,128 +138,19 @@ function setStatus(online) {
 }
 
 // ── Odometry ─────────────────────────────────────────────────
-// AmigaControlState integers from Amiga SDK
-const AMIGA_STATE = { 0: 'UNKNOWN', 1: 'UNKNOWN', 2: 'UNKNOWN', 3: 'UNKNOWN', 4: 'READY', 5: 'ACTIVE' };
-
-function handleOdom(msg) {
-  document.getElementById('odom-v').textContent = (msg.v   != null) ? msg.v.toFixed(3)   : '--';
-  document.getElementById('odom-w').textContent = (msg.w   != null) ? msg.w.toFixed(3)   : '--';
-  document.getElementById('amiga-soc').textContent = (msg.soc != null) ? msg.soc + '%' : '--%';
-  const stateEl = document.getElementById('odom-state');
-  if (msg.state != null) {
-    stateEl.textContent = AMIGA_STATE[msg.state] || String(msg.state);
-    stateEl.style.color = msg.state === 4 ? 'var(--green)' : 'var(--dim)';
-  }
-}
+function handleOdom(msg) {}
 
 // ── IMU HUD ──────────────────────────────────────────────────
-function fmt1(v) { return (v >= 0 ? '+' : '') + v.toFixed(1) + '°'; }
-function fmt2(v) { return (v >= 0 ? '+' : '') + v.toFixed(2); }
-
-function handleIMU(msg) {
-  const euler = msg.euler || {};
-  if (euler.roll  !== undefined) document.getElementById('imu-roll').textContent  = fmt1(euler.roll);
-  if (euler.pitch !== undefined) document.getElementById('imu-pitch').textContent = fmt1(euler.pitch);
-  if (euler.yaw   !== undefined) document.getElementById('imu-yaw').textContent   = fmt1(euler.yaw);
-}
+function handleIMU(msg) {}
 
 // ── RTK HUD ──────────────────────────────────────────────────
-const FIX_LABELS = {
-  0: { text: "NO FIX",  cls: "" },
-  1: { text: "GPS",     cls: "fix-gps" },
-  2: { text: "DGPS",    cls: "fix-gps" },
-  4: { text: "RTK FIX", cls: "fix-rtk" },
-  5: { text: "RTK FLT", cls: "fix-gps" },
-};
-
-function handleRTK(msg) {
-  const dot   = document.getElementById('rtk-live-dot');
-  const badge = document.getElementById('rtk-fix-badge');
-  const available = (msg.available != null)
-    ? !!msg.available
-    : ((msg.source === 'rtk') || ((msg.fix_quality || 0) > 0));
-
-  if (!available) {
-    dot.className = ''; dot.title = 'RTK OFFLINE';
-    badge.textContent = 'OFFLINE'; badge.className = '';
-    return;
-  }
-
-  dot.className = 'live'; dot.title = 'RTK LIVE';
-  const fi = FIX_LABELS[msg.fix_quality || 0] || { text: `FIX(${msg.fix_quality})`, cls: "fix-gps" };
-  badge.textContent = fi.text; badge.className = fi.cls;
-
-  const fmt = (v, d) => (v != null) ? v.toFixed(d) : '--';
-  document.getElementById('rtk-lat').textContent  = fmt(msg.lat, 7);
-  document.getElementById('rtk-lon').textContent  = fmt(msg.lon, 7);
-  document.getElementById('rtk-alt').textContent  = fmt(msg.alt, 2);
-  document.getElementById('rtk-sats').textContent = (msg.num_sats != null) ? msg.num_sats : '--';
-  document.getElementById('rtk-hdop').textContent = fmt(msg.hdop, 2);
-  document.getElementById('rtk-spd').textContent  = fmt(msg.speed_knots, 2);
-}
+function handleRTK(msg) {}
 
 // ── State status ─────────────────────────────────────────────
 function handleStateStatus(msg) {
   controlStateActive = msg.active;
   updateStateBtn();
   document.getElementById('state-btn').disabled = false;
-}
-
-// ── Navigation status ─────────────────────────────────────────
-function handleNavStatus(msg) {
-  const state = msg.state || 'idle';
-  navActive = (state === 'navigating');
-
-  const statusPanel = document.getElementById('nav-status-panel');
-  if (navActive || state === 'finished') {
-    statusPanel.classList.add('visible');
-  } else {
-    statusPanel.classList.remove('visible');
-  }
-
-  const overlay = document.getElementById('auto-overlay');
-  if (navActive) { overlay.classList.add('visible'); }
-  else           { overlay.classList.remove('visible'); }
-
-  const prog = msg.progress || [0, 0];
-  const headingDeg = (msg.heading_deg != null) ? msg.heading_deg : msg.target_bearing;
-  const headingDir = (msg.heading_dir != null) ? msg.heading_dir : null;
-  document.getElementById('nav-progress').textContent    = prog[0] + ' / ' + prog[1];
-  document.getElementById('nav-dist').textContent        = (msg.distance_m     != null) ? msg.distance_m.toFixed(1)     : '--';
-  document.getElementById('nav-bearing').textContent     = (headingDeg          != null) ? headingDeg.toFixed(0) + '°'          : '--';
-  document.getElementById('nav-mode-disp').textContent   = (msg.nav_mode    || '--').toUpperCase();
-  document.getElementById('nav-filter-disp').textContent = (msg.filter_mode || '--').toUpperCase();
-  document.getElementById('nav-tol').textContent         = (msg.tolerance_m != null) ? msg.tolerance_m.toFixed(1) : '--';
-
-  // Update heading display
-  if (headingDeg != null) {
-    document.getElementById('nav-heading').textContent  = headingDeg.toFixed(1) + '°';
-    document.getElementById('nav-cardinal').textContent = headingDir || bearingToCardinal(headingDeg);
-  }
-}
-
-function handleNavComplete(msg) {
-  navActive = false;
-  document.getElementById('auto-overlay').classList.remove('visible');
-  document.getElementById('nav-progress').textContent = '✓ DONE (' + (msg.total_wp || 0) + ')';
-  document.getElementById('nav-status-panel').classList.add('visible');
-}
-
-function handleNavWarning(msg) {
-  const warn = document.getElementById('warn-banner');
-  warn.textContent = '⚠ ' + (msg.msg || 'Navigation warning').toUpperCase();
-  warn.classList.add('visible');
-  setTimeout(() => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    warn.classList.remove('visible');
-    warn.textContent = '⚠ CONNECTION LOST — ROBOT STOPPED';
-  }, 5000);
-}
-
-// ── Bearing helpers ───────────────────────────────────────────
-function bearingToCardinal(deg) {
-  const dirs = ['N','NE','E','SE','S','SW','W','NW'];
-  return dirs[Math.round(((deg % 360) + 360) % 360 / 45) % 8];
 }
 
 // ── Direction label ───────────────────────────────────────────
@@ -316,6 +222,10 @@ window.addEventListener('load', () => {
   const stateBtn = document.getElementById('state-btn');
   stateBtn.addEventListener('click', toggleControlState);
   stateBtn.addEventListener('touchend', (e) => { e.preventDefault(); toggleControlState(); });
+
+  // REC button
+  const recBtn = document.getElementById('rec-btn');
+  recBtn.addEventListener('click', toggleRecording);
 
   // Speed slider
   const speedSlider = document.getElementById('speed-slider');

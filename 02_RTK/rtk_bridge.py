@@ -53,7 +53,7 @@ SCRIPT_OPEN_BROWSER = None
 # ── LOGGING ────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
-    level=logging.WARNING,
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler()],
 )
@@ -239,7 +239,7 @@ class SerialReader:
                              self._port, e, self.RECONNECT_DELAY)
                 time.sleep(self.RECONNECT_DELAY)
                 continue
-
+            logger.info("SerialReader: port opened: %s @ %d baud", self._port, self._baud)
             try:
                 while True:
                     try:

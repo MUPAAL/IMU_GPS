@@ -41,7 +41,7 @@ DEFAULT_HZ       = _cfg.NAV_HZ      if _cfg else 10.0
 
 
 logging.basicConfig(
-    level=logging.WARNING,
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler()],
 )
@@ -79,6 +79,7 @@ class ImuWsClient:
         while True:
             try:
                 async with websockets.connect(self._url) as ws:
+                    logger.info("ImuWsClient: connected to %s", self._url)
                     self._ws = ws
                     # ── INPUT ──────────────────────────────────────────────
                     async for msg in ws:
@@ -114,6 +115,7 @@ class RtkWsClient:
         while True:
             try:
                 async with websockets.connect(self._url) as ws:
+                    logger.info("RtkWsClient: connected to %s", self._url)
                     # ── INPUT ──────────────────────────────────────────────
                     async for msg in ws:
                     # ───────────────────────────────────────────────────────

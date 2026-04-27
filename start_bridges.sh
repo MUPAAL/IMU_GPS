@@ -29,6 +29,7 @@ start_window "01_IMU" "cd '$ROOT/01_IMU' && python imu_bridge.py"
 start_window "02_RTK" "cd '$ROOT/02_RTK' && python rtk_bridge.py"
 start_window "03_Nav" "cd '$ROOT/03_Nav' && python nav_bridge.py"
 start_window "04_Robot" "cd '$ROOT/04_Robot' && python robot_bridge.py"
+start_window "05_AutoNav" "cd '$ROOT/05_AutoNav' && python autonav_bridge.py"
 start_window "06_Camera" "cd '$ROOT/06_Camera' && python camera_bridge.py"
 
 tmux select-window -t "$SESSION:01_IMU"

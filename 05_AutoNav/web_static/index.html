@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AutoNav</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Header ── -->
+  <div id="header">
+    <span class="title">AUTONAV</span>
+    <span id="status-dot"></span>
+    <span id="status-text">DISCONNECTED</span>
+  </div>
+
+  <!-- ── Main 3-column layout ── -->
+  <div id="main">
+
+    <!-- LEFT: Inputs -->
+    <div class="col" id="col-input">
+      <div class="col-label">INPUT</div>
+      <div class="json-block">
+        <div class="json-type">imu <span id="imu-age" class="age">—</span></div>
+        <pre id="json-imu">waiting…</pre>
+      </div>
+      <div class="json-block">
+        <div class="json-type">rtk <span id="rtk-age" class="age">—</span></div>
+        <pre id="json-rtk">waiting…</pre>
+      </div>
+    </div>
+
+    <!-- MIDDLE: Control -->
+    <div class="col" id="col-mid">
+
+      <!-- State badge -->
+      <div id="state-badge" class="state-idle">IDLE</div>
+
+      <!-- Control buttons -->
+      <div id="ctrl-btns">
+        <button id="btn-start"  class="ctrl-btn btn-start">START</button>
+        <button id="btn-stop"   class="ctrl-btn btn-stop">STOP</button>
+        <button id="btn-pause"  class="ctrl-btn btn-pause">PAUSE</button>
+        <button id="btn-resume" class="ctrl-btn btn-resume">RESUME</button>
+      </div>
+
+      <!-- Compass -->
+      <div id="compass-wrap">
+        <svg id="compass" viewBox="0 0 200 200">
+          <!-- Ring -->
+          <circle cx="100" cy="100" r="88" class="compass-ring"/>
+          <!-- Cardinal labels -->
+          <text x="100" y="18"  class="compass-label">N</text>
+          <text x="186" y="104" class="compass-label">E</text>
+          <text x="100" y="194" class="compass-label">S</text>
+          <text x="14"  y="104" class="compass-label">W</text>
+          <!-- Target bearing needle (dashed, orange) -->
+          <line id="needle-target" x1="100" y1="100" x2="100" y2="20"
+                class="needle-target"/>
+          <!-- Heading needle (solid, blue) -->
+          <line id="needle-heading" x1="100" y1="100" x2="100" y2="20"
+                class="needle-heading"/>
+          <!-- Center dot -->
+          <circle cx="100" cy="100" r="4" class="compass-center"/>
+        </svg>
+        <div id="compass-legend">
+          <span class="legend-heading">― heading</span>
+          <span class="legend-target">--- target</span>
+        </div>
+      </div>
+
+      <!-- Metrics grid -->
+      <div id="metrics">
+        <div class="metric"><span class="mlabel">HEADING</span><span class="mval" id="m-heading">—</span></div>
+        <div class="metric"><span class="mlabel">TARGET</span><span class="mval" id="m-target">—</span></div>
+        <div class="metric"><span class="mlabel">ERROR</span><span class="mval" id="m-error">—</span></div>
+        <div class="metric"><span class="mlabel">DIST</span><span class="mval" id="m-dist">—</span></div>
+        <div class="metric"><span class="mlabel">PROGRESS</span><span class="mval" id="m-progress">—</span></div>
+        <div class="metric"><span class="mlabel">LINEAR</span><span class="mval" id="m-linear">—</span></div>
+        <div class="metric"><span class="mlabel">ANGULAR</span><span class="mval" id="m-angular">—</span></div>
+        <div class="metric"><span class="mlabel">GPS AGE</span><span class="mval" id="m-gps-age">—</span></div>
+        <div class="metric"><span class="mlabel">IMU AGE</span><span class="mval" id="m-imu-age">—</span></div>
+      </div>
+
+    </div>
+
+    <!-- RIGHT: Outputs -->
+    <div class="col" id="col-output">
+      <div class="col-label">OUTPUT</div>
+      <div class="json-block">
+        <div class="json-type">joystick cmd</div>
+        <pre id="json-cmd">waiting…</pre>
+      </div>
+      <div class="json-block">
+        <div class="json-type">autonav_status</div>
+        <pre id="json-status">waiting…</pre>
+      </div>
+    </div>
+
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

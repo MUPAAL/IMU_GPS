@@ -47,7 +47,7 @@ DEFAULT_NORTH_OFFSET = _cfg.IMU_NORTH_OFFSET if _cfg else 0.0
 # ── Logger setup ─────────────────────────────────────────────────────────────
 def _setup_logger() -> logging.Logger:
     logging.basicConfig(
-        level=logging.WARNING,
+        level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=[logging.StreamHandler()],
     )
@@ -404,6 +404,7 @@ class SerialReader:
 
     def run(self) -> None:
         """Entry point for the serial reader thread."""
+        logger.info(f"Opening serial port {self._port} at {self._baud} baud.")
         while True:
             try:
                 with serial.Serial(self._port, self._baud, timeout=1.0) as ser:

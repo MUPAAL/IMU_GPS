@@ -32,6 +32,7 @@ import platform
 import threading
 import time
 import webbrowser
+from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -55,10 +56,74 @@ DEFAULT_MAX_ANGULAR    = _cfg.ROBOT_MAX_ANGULAR    if _cfg else 1.0
 DEFAULT_WATCHDOG_TIMEOUT = _cfg.ROBOT_WATCHDOG_TIMEOUT if _cfg else 2.0
 DEFAULT_IMU_WS_URL     = _cfg.NAV_IMU_WS           if _cfg else "ws://localhost:8766"
 DEFAULT_RTK_WS_URL     = _cfg.NAV_RTK_WS           if _cfg else "ws://localhost:8776"
+DEFAULT_RECORD_INTERVAL = max(0.2, _cfg.ROBOT_RECORD_INTERVAL if _cfg else 1.0)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # BLOCK 1 — DATA MODEL
 # ══════════════════════════════════════════════════════════════════════════════
+
+class Recorder:
+    """Write slim JSONL log during a run. Thread-safe."""
+
+    LOG_DIR = Path(__file__).parent / "data_log"
+
+    def __init__(self, interval: float = 1.0) -> None:
+        self._file = None
+        self._lock = threading.Lock()
+        self.filename: str = ""
+        self._interval = max(0.2, interval)
+        self._last_ts: dict[str, float] = {}
+
+    def start(self) -> str:
+        self.LOG_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.filename = f"run_{ts}.jsonl"
+        path = self.LOG_DIR / self.filename
+        with self._lock:
+            self._file = path.open("a", encoding="utf-8")
+        return self.filename
+
+    def stop(self) -> None:
+        with self._lock:
+            if self._file:
+                self._file.close()
+                self._file = None
+
+    @property
+    def active(self) -> bool:
+        return self._file is not None
+
+    def write(self, rec_ts: float, msg_type: str, msg: dict) -> None:
+        if rec_ts - self._last_ts.get(msg_type, 0.0) < self._interval:
+            return
+        row = self._slim(rec_ts, msg_type, msg)
+        if row is None:
+            return
+        self._last_ts[msg_type] = rec_ts
+        line = json.dumps(row, ensure_ascii=False) + "\n"
+        with self._lock:
+            if self._file:
+                self._file.write(line)
+                self._file.flush()
+
+    @staticmethod
+    def _slim(rec_ts: float, msg_type: str, msg: dict) -> dict | None:
+        base = {"type": msg_type, "rec_ts": rec_ts}
+        if msg_type == "imu":
+            h = msg.get("heading", {})
+            e = msg.get("euler", {})
+            return {**base,
+                    "heading_deg": h.get("deg"), "heading_dir": h.get("dir"),
+                    "roll": e.get("roll"), "pitch": e.get("pitch"), "yaw": e.get("yaw")}
+        if msg_type == "rtk":
+            return {**base,
+                    "lat": msg.get("lat"), "lon": msg.get("lon"),
+                    "fix_quality": msg.get("fix_quality"), "num_sats": msg.get("num_sats")}
+        if msg_type == "odom":
+            return {**base,
+                    "v": msg.get("v"), "w": msg.get("w"),
+                    "soc": msg.get("soc"), "state": msg.get("state")}
+        return None
 
 _last_odom:    dict  = {}
 _odom_lock           = threading.Lock()
@@ -119,8 +184,6 @@ class HttpFileServer:
             )
         server = ThreadingHTTPServer(("0.0.0.0", self._port), make_handler)
         threading.Thread(target=server.serve_forever, name="HttpFileServer", daemon=True).start()
-        logger.info("HttpFileServer: http://0.0.0.0:%d", self._port)
-
 
 class ImuWsClient:
     """Subscribe to imu_bridge WS and re-broadcast frames to robot_bridge clients."""
@@ -135,7 +198,6 @@ class ImuWsClient:
         while True:
             try:
                 async with websockets.connect(self._url) as ws:
-                    logger.info("ImuWsClient: connected to %s", self._url)
                     async for raw in ws:
                         try:
                             msg = json.loads(raw)
@@ -160,7 +222,6 @@ class RtkWsClient:
         while True:
             try:
                 async with websockets.connect(self._url) as ws:
-                    logger.info("RtkWsClient: connected to %s", self._url)
                     async for raw in ws:
                         try:
                             msg = json.loads(raw)
@@ -220,6 +281,7 @@ class RobotWebSocketServer:
         self._clients_lock = asyncio.Lock()
         self._loop:        asyncio.AbstractEventLoop | None = None
         self._last_heartbeat = time.time()
+        self._recorder     = Recorder(interval=DEFAULT_RECORD_INTERVAL)
 
     def open_serial(self) -> None:
         try:
@@ -318,10 +380,13 @@ class RobotWebSocketServer:
             )
 
     async def _broadcast(self, obj: dict) -> None:
+        rec_ts = time.time()
         payload = dict(obj)
         if "type" in payload and "version" not in payload:
             payload["version"] = WS_MSG_VERSION
         msg = json.dumps(payload)
+        if self._recorder.active:
+            self._recorder.write(rec_ts, obj.get("type", ""), obj)
         async with self._clients_lock:
             clients = set(self._clients)
         dead = set()
@@ -356,7 +421,6 @@ class RobotWebSocketServer:
     async def _ws_handler(self, websocket) -> None:
         async with self._clients_lock:
             self._clients.add(websocket)
-        logger.info("WS: client connected: %s", websocket.remote_address)
         try:
             await websocket.send(
                 json.dumps({"type": "state_status", "active": self._auto_active, "version": WS_MSG_VERSION})
@@ -382,13 +446,22 @@ class RobotWebSocketServer:
                 elif msg_type == "toggle_state":
                     self._last_heartbeat = time.time()
                     self._send_raw(b"\r")
-                    logger.info("WS: toggle_state → serial \\r")
+                elif msg_type == "set_recording":
+                    enabled = msg.get("enabled")
+                    logger.warning("set_recording received: enabled=%s", enabled)
+                    if enabled:
+                        filename = self._recorder.start()
+                        logger.warning("Recording started: %s", filename)
+                        await self._broadcast({"type": "rec_status", "recording": True, "filename": filename})
+                    else:
+                        self._recorder.stop()
+                        logger.warning("Recording stopped")
+                        await self._broadcast({"type": "rec_status", "recording": False, "filename": ""})
         except Exception:
             pass
         finally:
             async with self._clients_lock:
                 self._clients.discard(websocket)
-            logger.info("WS: client disconnected: %s", websocket.remote_address)
 
     async def serve(self) -> None:
         self._loop           = asyncio.get_running_loop()
@@ -399,7 +472,6 @@ class RobotWebSocketServer:
         rtk_client = RtkWsClient(self._rtk_ws_url, self._broadcast)
 
         async with websockets.serve(self._ws_handler, "0.0.0.0", self._port, ping_interval=20, ping_timeout=10):
-            logger.info("RobotWebSocketServer: ws://0.0.0.0:%d", self._port)
             await asyncio.gather(
                 self._odom_broadcast_loop(),
                 self._watchdog_loop(),
@@ -460,7 +532,6 @@ class RobotBridge:
 
         logger.info("RobotBridge: http://localhost:%d  ws://localhost:%d  imu→%s  rtk→%s",
                     self._ws_port, self._ws_port + 1, self._imu_ws_url, self._rtk_ws_url)
-        logger.info("Open browser at http://localhost:%d", self._ws_port)
         threading.Timer(1.0, lambda: webbrowser.open(f"http://localhost:{self._ws_port}")).start()
         asyncio.run(ws_server.serve())
 
