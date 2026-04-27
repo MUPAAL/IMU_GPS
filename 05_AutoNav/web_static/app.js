@@ -132,9 +132,9 @@ function handleNavStatus(msg) {
 }
 
 // ── Control buttons ───────────────────────────────────────────
-function sendCmd(type) {
+function sendCmd(type, extra = {}) {
   if (navWs && navWs.readyState === WebSocket.OPEN) {
-    navWs.send(JSON.stringify({ type }));
+    navWs.send(JSON.stringify({ type, ...extra }));
   }
 }
 
@@ -142,6 +142,14 @@ document.getElementById('btn-start').addEventListener('click',  () => sendCmd('s
 document.getElementById('btn-stop').addEventListener('click',   () => sendCmd('stop'));
 document.getElementById('btn-pause').addEventListener('click',  () => sendCmd('pause'));
 document.getElementById('btn-resume').addEventListener('click', () => sendCmd('resume'));
+
+// ── Speed slider ──────────────────────────────────────────────
+const speedSlider = document.getElementById('speed-slider');
+speedSlider.addEventListener('input', (e) => {
+  const pct = parseInt(e.target.value);
+  document.getElementById('speed-value').textContent = pct + '%';
+  sendCmd('set_speed', { ratio: pct / 100 });
+});
 
 // ── Boot ─────────────────────────────────────────────────────
 connectAutoNav();

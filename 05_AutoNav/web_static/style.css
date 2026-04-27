@@ -152,6 +152,23 @@ body {
 .btn-pause  { border-color: var(--yellow); color: var(--yellow); }
 .btn-resume { border-color: var(--blue);   color: var(--blue); }
 
+/* ── Speed slider ── */
+#speed-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  flex-shrink: 0;
+  width: 100%;
+}
+.spd-label { font-size: 11px; color: var(--dim); letter-spacing: 1px; min-width: 28px; }
+.spd-val   { font-size: 13px; color: var(--green); font-weight: bold; min-width: 38px; text-align: right; }
+#speed-slider {
+  flex: 1;
+  accent-color: var(--green);
+  cursor: pointer;
+}
+
 /* ── Compass ── */
 #compass-wrap {
   display: flex;

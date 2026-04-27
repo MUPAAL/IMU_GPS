@@ -36,7 +36,6 @@ import asyncio
 import csv
 import json
 import logging
-import math
 import socketserver
 import threading
 import time
@@ -59,10 +58,6 @@ GPS_TIMEOUT_S      = _cfg.AUTONAV_GPS_TIMEOUT_S if _cfg else 5.0
 CONTROL_HZ         = _cfg.AUTONAV_CONTROL_HZ    if _cfg else 5.0
 HEARTBEAT_INTERVAL = 1.0
 
-# angular sign: +1 = positive error → turn left/CCW.
-# Set to -1 if robot turns the wrong way.
-ANGULAR_SIGN = 1
-
 PATH_FILE = Path(__file__).parent / "path.csv"
 
 # ── Logger setup ──────────────────────────────────────────────────────────────
@@ -76,28 +71,6 @@ def _setup_logger() -> logging.Logger:
     return logging.getLogger(__name__)
 
 logger = _setup_logger()
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-# GEO HELPERS
-# ═════════════════════════════════════════════════════════════════════════════
-
-def _haversine(lat1, lon1, lat2, lon2):
-    """Great-circle distance in metres."""
-    R = 6_371_000
-    r = math.radians
-    dlat = r(lat2 - lat1)
-    dlon = r(lon2 - lon1)
-    a = math.sin(dlat/2)**2 + math.cos(r(lat1))*math.cos(r(lat2))*math.sin(dlon/2)**2
-    return 2 * R * math.asin(math.sqrt(a))
-
-def _bearing(lat1, lon1, lat2, lon2):
-    """Initial bearing from (lat1,lon1) to (lat2,lon2), degrees [0,360)."""
-    r = math.radians
-    dlon = r(lon2 - lon1)
-    x = math.sin(dlon) * math.cos(r(lat2))
-    y = math.cos(r(lat1))*math.sin(r(lat2)) - math.sin(r(lat1))*math.cos(r(lat2))*math.cos(dlon)
-    return (math.degrees(math.atan2(x, y)) + 360) % 360
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -315,8 +288,8 @@ class AutoNavLoop:
     """
     Control loop at CONTROL_HZ.
 
-    Handles: sensor reading, timeout safety, waypoint selection (Pure Pursuit),
-             state machine, and calls algo.compute() for linear/angular output.
+    Handles: sensor reading, timeout safety, state machine.
+    All geometry, filtering, and steering logic is in autonav_algo.py.
     """
 
     def __init__(self, imu: ImuWsClient, rtk: RtkWsClient,
@@ -331,8 +304,8 @@ class AutoNavLoop:
         self._state = "idle"            # idle | running | paused | arrived
         self._paused_by_timeout = False
         self._wp_idx = 0
-        self._arrive_counter = 0
         self._prev_ts = time.monotonic()
+        self._speed_ratio: float = 1.0
 
     # ── State control (called from WS message handler) ────────────────────────
 
@@ -341,7 +314,6 @@ class AutoNavLoop:
             logger.warning("start: no waypoints loaded")
             return
         self._wp_idx = 0
-        self._arrive_counter = 0
         self._paused_by_timeout = False
         algo.reset()
         self._state = "running"
@@ -363,6 +335,10 @@ class AutoNavLoop:
             self._state = "running"
             self._paused_by_timeout = False
 
+    def cmd_set_speed(self, ratio: float) -> None:
+        self._speed_ratio = max(0.0, min(1.0, ratio))
+        logger.info("Speed ratio set to %.0f%%", self._speed_ratio * 100)
+
     # ── Main loop ─────────────────────────────────────────────────────────────
 
     async def run(self) -> None:
@@ -377,8 +353,8 @@ class AutoNavLoop:
             rtk_raw = self._rtk.latest
 
             if algo.ALGO_DEBUG:
-                print(f"[RAW IMU] {json.dumps(imu_raw)}")
-                print(f"[RAW RTK] {json.dumps(rtk_raw)}")
+                logger.debug(f"[RAW IMU] {json.dumps(imu_raw)}")
+                logger.debug(f"[RAW RTK] {json.dumps(rtk_raw)}")
 
             # ── Extract values from raw dicts ─────────────────────────────────
             heading = None
@@ -397,15 +373,12 @@ class AutoNavLoop:
             imu_age = now - imu_ts
 
             if algo.ALGO_DEBUG:
-                print(f"[EXTRACTED] heading={heading} lat={lat} lon={lon} "
-                      f"gps_age={gps_age:.2f}s imu_age={imu_age:.2f}s")
+                logger.debug(f"[EXTRACTED] heading={heading} lat={lat} lon={lon} "
+                             f"gps_age={gps_age:.2f}s imu_age={imu_age:.2f}s")
             # ─────────────────────────────────────────────────────────────────
 
             linear, angular = 0.0, 0.0
-            target_bearing = None
-            bearing_error  = None
-            dist_to_wp     = None
-            dist_to_final  = None
+            debug: dict = {}
 
             # ── State machine ─────────────────────────────────────────────────
             sensors_ok = (
@@ -425,55 +398,24 @@ class AutoNavLoop:
                 logger.info("Sensors recovered — auto-resuming")
 
             if self._state == "running" and sensors_ok:
-                wps = self._waypoints
-
-                # Advance waypoint index when close enough
-                wp = wps[self._wp_idx]
-                d  = _haversine(lat, lon, wp["lat"], wp["lon"])
-                if d < algo.REACH_TOL_M:
-                    self._arrive_counter += 1
-                    if self._arrive_counter >= algo.ARRIVE_FRAMES:
-                        self._wp_idx += 1
-                        self._arrive_counter = 0
-                        logger.info("Waypoint %d/%d reached", self._wp_idx, len(wps))
-                else:
-                    self._arrive_counter = 0
-
-                # Check if all waypoints done
-                if self._wp_idx >= len(wps):
+                # ── Call algorithm ────────────────────────────────────────────
+                prev_wp = self._wp_idx
+                linear, angular, self._wp_idx, arrived, debug = algo.compute(
+                    lat=lat, lon=lon, heading_deg=heading,
+                    waypoints=self._waypoints, wp_idx=self._wp_idx, dt_s=dt,
+                )
+                # ─────────────────────────────────────────────────────────────
+                if self._wp_idx > prev_wp:
+                    logger.info("Waypoint %d/%d reached", self._wp_idx, len(self._waypoints))
+                if arrived:
                     self._state = "arrived"
                     logger.info("Arrived at destination")
-                else:
-                    # Pure Pursuit: pick first waypoint at least LOOKAHEAD_M away
-                    target = wps[-1]
-                    for w in wps[self._wp_idx:]:
-                        if _haversine(lat, lon, w["lat"], w["lon"]) >= algo.LOOKAHEAD_M:
-                            target = w
-                            break
-
-                    target_bearing = _bearing(lat, lon, target["lat"], target["lon"])
-                    dist_to_wp     = _haversine(lat, lon, wps[self._wp_idx]["lat"], wps[self._wp_idx]["lon"])
-                    dist_to_final  = _haversine(lat, lon, wps[-1]["lat"], wps[-1]["lon"])
-                    bearing_error  = (target_bearing - heading + 540) % 360 - 180
-
-                    # ── Call algorithm ────────────────────────────────────────
-                    linear, angular = algo.compute(
-                        heading_deg        = heading,
-                        target_bearing_deg = target_bearing,
-                        dist_to_wp_m       = dist_to_wp,
-                        dist_to_final_m    = dist_to_final,
-                        dt_s               = dt,
-                    )
-                    angular *= ANGULAR_SIGN
-                    # ─────────────────────────────────────────────────────────
-
-                    if algo.ALGO_DEBUG:
-                        print(f"[CMD OUT] linear={linear:.3f} angular={angular:.3f} "
-                              f"error={bearing_error:.1f}° dist={dist_to_wp:.1f}m "
-                              f"wp={self._wp_idx}/{len(wps)}")
 
             # ── Send to robot ─────────────────────────────────────────────────
-            await self._robot.send(round(linear, 3), round(angular, 3))
+            await self._robot.send(
+                round(linear * self._speed_ratio, 3),
+                round(angular * self._speed_ratio, 3),
+            )
 
             # ── Broadcast status ──────────────────────────────────────────────
             status = {
@@ -482,14 +424,16 @@ class AutoNavLoop:
                 "state":              self._state,
                 "current_wp_idx":     self._wp_idx,
                 "total_wp":           len(self._waypoints),
-                "dist_to_wp_m":       round(dist_to_wp, 2)    if dist_to_wp    is not None else None,
-                "target_bearing_deg": round(target_bearing, 1) if target_bearing is not None else None,
-                "heading_deg":        round(heading, 1)        if heading        is not None else None,
-                "bearing_error_deg":  round(bearing_error, 1)  if bearing_error  is not None else None,
+                "dist_to_wp_m":       debug.get("dist_to_wp_m"),
+                "dist_to_final_m":    debug.get("dist_to_final_m"),
+                "target_bearing_deg": debug.get("target_bearing_deg"),
+                "heading_deg":        debug.get("heading_filtered_deg"),
+                "bearing_error_deg":  debug.get("bearing_error_deg"),
                 "linear":             round(linear, 3),
                 "angular":            round(angular, 3),
                 "gps_age_s":          round(gps_age, 2),
                 "imu_age_s":          round(imu_age, 2),
+                "speed_ratio":        self._speed_ratio,
                 "imu_raw":            imu_raw,
                 "rtk_raw":            rtk_raw,
             }
@@ -555,10 +499,11 @@ class AutoNavBridge:
         if self._nav_loop is None:
             return
         t = msg.get("type", "")
-        if   t == "start":  self._nav_loop.cmd_start()
-        elif t == "stop":   self._nav_loop.cmd_stop()
-        elif t == "pause":  self._nav_loop.cmd_pause()
-        elif t == "resume": self._nav_loop.cmd_resume()
+        if   t == "start":     self._nav_loop.cmd_start()
+        elif t == "stop":      self._nav_loop.cmd_stop()
+        elif t == "pause":     self._nav_loop.cmd_pause()
+        elif t == "resume":    self._nav_loop.cmd_resume()
+        elif t == "set_speed": self._nav_loop.cmd_set_speed(float(msg.get("ratio", 1.0)))
 
 
 if __name__ == "__main__":
