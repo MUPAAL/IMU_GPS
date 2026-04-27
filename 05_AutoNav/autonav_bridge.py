@@ -490,6 +490,8 @@ class AutoNavLoop:
                 "angular":            round(angular, 3),
                 "gps_age_s":          round(gps_age, 2),
                 "imu_age_s":          round(imu_age, 2),
+                "imu_raw":            imu_raw,
+                "rtk_raw":            rtk_raw,
             }
             try:
                 self._queue.put_nowait(json.dumps(status))

@@ -15,6 +15,8 @@ Waypoint selection and state machine are handled by autonav_bridge.
 
 # ── Parameters ────────────────────────────────────────────────────────────────
 
+ALGO_DEBUG      = False  # set True to print raw dicts and extracted values each tick
+
 LOOKAHEAD_M     = 2.0   # pure pursuit: lookahead distance to select target waypoint (m)
 REACH_TOL_M     = 1.5   # waypoint arrival radius (m)
 ARRIVE_FRAMES   = 5     # consecutive frames inside REACH_TOL_M to confirm arrival

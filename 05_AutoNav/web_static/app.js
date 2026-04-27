@@ -1,13 +1,9 @@
 // AutoNav Dashboard
-// WS connections:
-//   :8766 → imu_bridge  (input)
-//   :8776 → rtk_bridge  (input)
-//   :8806 → autonav     (output + control)
+// Single WS connection to autonav_bridge :8806
+// IMU and RTK raw data are proxied through autonav_status messages
 
-const IMU_WS_URL    = 'ws://localhost:8766';
-const RTK_WS_URL    = 'ws://localhost:8776';
-const AUTONAV_PORT  = Number(window.location.port || 8805) + 1;  // 8806
-const AUTONAV_URL   = `ws://${window.location.hostname}:${AUTONAV_PORT}`;
+const AUTONAV_PORT = Number(window.location.port || 8805) + 1;  // 8806
+const AUTONAV_URL  = `ws://${window.location.hostname}:${AUTONAV_PORT}`;
 
 const JSON_THROTTLE_MS = 300;
 
@@ -36,8 +32,6 @@ const mImuAge   = document.getElementById('m-imu-age');
 
 // ── State ────────────────────────────────────────────────────
 let navWs = null;
-let lastImuTs = 0;
-let lastRtkTs = 0;
 const lastUpdate = { imu: 0, rtk: 0, status: 0 };
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -45,58 +39,21 @@ function fmt(v, d = 1, unit = '') {
   return v != null ? v.toFixed(d) + unit : '—';
 }
 
-function needleXY(angleDeg) {
-  const rad = (angleDeg - 90) * Math.PI / 180;
-  return {
-    x2: 100 + 75 * Math.cos(rad),
-    y2: 100 + 75 * Math.sin(rad),
-  };
-}
-
 function setNeedle(el, angleDeg) {
   if (angleDeg == null) return;
-  const { x2, y2 } = needleXY(angleDeg);
-  el.setAttribute('x2', x2.toFixed(1));
-  el.setAttribute('y2', y2.toFixed(1));
+  const rad = (angleDeg - 90) * Math.PI / 180;
+  el.setAttribute('x2', (100 + 75 * Math.cos(rad)).toFixed(1));
+  el.setAttribute('y2', (100 + 75 * Math.sin(rad)).toFixed(1));
 }
 
-function updateAgeLabels() {
-  const now = Date.now();
-  if (lastImuTs) imuAge.textContent = ((now - lastImuTs) / 1000).toFixed(1) + 's ago';
-  if (lastRtkTs) rtkAge.textContent = ((now - lastRtkTs) / 1000).toFixed(1) + 's ago';
-}
-setInterval(updateAgeLabels, 500);
-
-// ── IMU WebSocket ─────────────────────────────────────────────
-function connectIMU() {
-  const ws = new WebSocket(IMU_WS_URL);
-  ws.onmessage = (e) => {
-    const now = Date.now();
-    lastImuTs = now;
-    if (now - lastUpdate.imu < JSON_THROTTLE_MS) return;
-    lastUpdate.imu = now;
-    try {
-      const msg = JSON.parse(e.data);
-      jsonImu.textContent = JSON.stringify(msg, null, 2);
-    } catch (_) {}
-  };
-  ws.onclose = () => setTimeout(connectIMU, 3000);
-}
-
-// ── RTK WebSocket ─────────────────────────────────────────────
-function connectRTK() {
-  const ws = new WebSocket(RTK_WS_URL);
-  ws.onmessage = (e) => {
-    const now = Date.now();
-    lastRtkTs = now;
-    if (now - lastUpdate.rtk < JSON_THROTTLE_MS) return;
-    lastUpdate.rtk = now;
-    try {
-      const msg = JSON.parse(e.data);
-      jsonRtk.textContent = JSON.stringify(msg, null, 2);
-    } catch (_) {}
-  };
-  ws.onclose = () => setTimeout(connectRTK, 3000);
+function setAge(el, ageS, threshold) {
+  if (ageS == null || ageS > 999) {
+    el.textContent = 'NO DATA';
+    el.style.color = 'var(--red)';
+  } else {
+    el.textContent = ageS.toFixed(2) + 's';
+    el.style.color = ageS > threshold ? 'var(--red)' : '';
+  }
 }
 
 // ── AutoNav WebSocket ─────────────────────────────────────────
@@ -124,17 +81,9 @@ function connectAutoNav() {
   };
 }
 
-function setAge(el, ageS, threshold) {
-  if (ageS == null || ageS > 999) {
-    el.textContent = 'NO DATA';
-    el.style.color = 'var(--red)';
-  } else {
-    el.textContent = ageS.toFixed(2) + 's';
-    el.style.color = ageS > threshold ? 'var(--red)' : '';
-  }
-}
-
 function handleNavStatus(msg) {
+  const now = Date.now();
+
   // State badge
   const state = msg.state || 'idle';
   stateBadge.textContent = state.toUpperCase();
@@ -157,11 +106,23 @@ function handleNavStatus(msg) {
   setAge(mGpsAge, msg.gps_age_s, 2.0);
   setAge(mImuAge, msg.imu_age_s, 2.0);
 
+  // Input JSON panels (throttled) — data proxied from 01/02 via bridge
+  if (now - lastUpdate.imu >= JSON_THROTTLE_MS && msg.imu_raw) {
+    lastUpdate.imu = now;
+    jsonImu.textContent = JSON.stringify(msg.imu_raw, null, 2);
+  }
+  if (now - lastUpdate.rtk >= JSON_THROTTLE_MS && msg.rtk_raw) {
+    lastUpdate.rtk = now;
+    jsonRtk.textContent = JSON.stringify(msg.rtk_raw, null, 2);
+  }
+
   // Output JSON panels (throttled)
-  const now = Date.now();
   if (now - lastUpdate.status >= JSON_THROTTLE_MS) {
     lastUpdate.status = now;
-    jsonStatus.textContent = JSON.stringify(msg, null, 2);
+    const statusDisplay = Object.fromEntries(
+      Object.entries(msg).filter(([k]) => k !== 'imu_raw' && k !== 'rtk_raw')
+    );
+    jsonStatus.textContent = JSON.stringify(statusDisplay, null, 2);
     jsonCmd.textContent = JSON.stringify({
       type: 'joystick',
       linear: msg.linear,
@@ -183,6 +144,4 @@ document.getElementById('btn-pause').addEventListener('click',  () => sendCmd('p
 document.getElementById('btn-resume').addEventListener('click', () => sendCmd('resume'));
 
 // ── Boot ─────────────────────────────────────────────────────
-connectIMU();
-connectRTK();
 connectAutoNav();
