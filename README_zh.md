@@ -7,7 +7,8 @@ pip install pyserial websockets depthai opencv-python numpy
 ./start_bridges.sh
 ```
 
-一键在 tmux 中启动 01_IMU · 02_RTK · 03_Nav · 04_Robot · 06_Camera。
+一键在 tmux 中启动 01_IMU · 02_RTK · 03_Nav · 04_Robot · 06_Camera，各自独立窗口。
+在窗口里按 `Ctrl+C` 只会停止当前进程，不会关闭 tmux 窗口。
 后台挂起：`Ctrl-B D` · 结束会话：`tmux kill-session -t bridges`
 
 ---
@@ -69,7 +70,7 @@ pip install pyserial websockets depthai opencv-python numpy
 ```
 IMU_GPS/
 ├── config.py                    # ★ 所有模块（01–06）的超参数统一配置文件
-├── start_bridges.sh             # ★ 一键启动脚本（01–04 + 06，tmux 瓦片布局）
+├── start_bridges.sh             # ★ 一键启动脚本（01–04 + 06，tmux 独立窗口）
 │
 ├── 01_IMU/
 │   ├── bno085_esp32c3/          # ESP32-C3 Arduino 固件（SPI，50 Hz JSON 输出）
@@ -171,16 +172,14 @@ pip install pyserial websockets
 ./start_bridges.sh
 ```
 
-在单个 tmux session 中以瓦片布局启动模块 01–04 和 06：
+在单个 tmux session 中以独立窗口启动模块 01–04 和 06：
 
 ```
-┌──────────────┬──────────────┐
-│  01_IMU      │  02_RTK      │
-├──────────────┼──────────────┤
-│  03_Nav      │  04_Robot    │
-├──────────────┴──────────────┤
-│        06_Camera            │
-└─────────────────────────────┘
+窗口 1：01_IMU
+窗口 2：02_RTK
+窗口 3：03_Nav
+窗口 4：04_Robot
+窗口 5：06_Camera
 ```
 
 - 后台挂起：`Ctrl-B D`

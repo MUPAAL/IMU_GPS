@@ -10,7 +10,7 @@ Edit this file and restart the relevant module to apply changes.
 # 01_IMU  — BNO085 serial → WebSocket bridge
 # ══════════════════════════════════════════════════════════════════════════════
 # ls /dev/cu.*
-IMU_SERIAL_PORT   = "/dev/cu.usbmodem101"   # Serial device (Mac: cu.usbmodem*, Linux: /dev/ttyACM0)
+IMU_SERIAL_PORT   = "/dev/cu.usbmodem1201"   # Serial device (Mac: cu.usbmodem*, Linux: /dev/ttyACM0)
 IMU_BAUD          = 921600                   # Serial baud rate
 IMU_WS_PORT       = 8765                     # HTTP port; WebSocket = IMU_WS_PORT + 1
 IMU_NORTH_OFFSET  = 0.0                      # North heading offset (degrees) for yaw calibration
@@ -20,17 +20,12 @@ IMU_NORTH_OFFSET  = 0.0                      # North heading offset (degrees) fo
 # 02_RTK  — RTK GPS serial → WebSocket bridge
 # ══════════════════════════════════════════════════════════════════════════════
 
-RTK_SERIAL_PORT   = "/dev/cu.usbmodem11203"  # RTK receiver serial port (Linux: /dev/ttyACM1)
-RTK_SERIAL_PORTS  = ["/dev/cu.usbmodem11203", "/dev/cu.usbmodem103"]  # Add a second port here when using two RTK receivers
+RTK_SERIAL_PORT   = "/dev/cu.usbmodem1103"  # RTK receiver serial port (Linux: /dev/ttyACM1)
 RTK_BAUD          = 9600                     # Serial baud rate (NMEA standard)
 RTK_WS_PORT       = 8775                     # HTTP port; WebSocket = RTK_WS_PORT + 1
 RTK_HZ            = 5.0                      # Broadcast rate (Hz)
 RTK_DEFAULT_LAT   = 38.9412928598587         # Fallback latitude when no GPS fix
 RTK_DEFAULT_LON   = -92.31884600793728       # Fallback longitude when no GPS fix
-RTK_HEADING_SOURCE_A = "rtk1"                # Baseline start source for dual-RTK heading
-RTK_HEADING_SOURCE_B = "rtk2"                # Baseline end source for dual-RTK heading
-RTK_HEADING_OFFSET_DEG = 0.0                 # Mounting yaw offset added to computed heading
-RTK_HEADING_MIN_BASELINE_M = 0.3             # Reject heading if baseline is shorter than this
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -49,13 +44,12 @@ NAV_REACH_TOLERANCE_M = 0.5                       # Waypoint arrival tolerance (
 # ══════════════════════════════════════════════════════════════════════════════
 
 ROBOT_WS_PORT          = 8888                      # HTTP port; WebSocket = ROBOT_WS_PORT + 1
-ROBOT_SERIAL_PORT      = "/dev/cu.usbmodem11301"   # Feather M4 serial port (Linux: /dev/ttyACM0)
+ROBOT_SERIAL_PORT      = "/dev/cu.usbmodem1301"   # Feather M4 serial port (Linux: /dev/ttyACM0)
 ROBOT_SERIAL_BAUD      = 115200                    # Serial baud rate
 ROBOT_SERIAL_TIMEOUT   = 1.0                       # Serial read timeout (seconds)
 ROBOT_MAX_LINEAR       = 1.0                       # Max linear velocity (m/s)
 ROBOT_MAX_ANGULAR      = 1.0                       # Max angular velocity (rad/s)
 ROBOT_WATCHDOG_TIMEOUT = 2.0                       # Watchdog timeout (seconds); triggers e-stop
-ROBOT_NAV_WS           = "ws://localhost:8786"     # nav_bridge WebSocket URL
 
 
 # ══════════════════════════════════════════════════════════════════════════════

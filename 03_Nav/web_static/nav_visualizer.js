@@ -14,123 +14,65 @@ const WS_URL = `ws://${window.location.hostname}:${Number(window.location.port |
 
 const DEFAULT_POS = [38.9412928598587, -92.31884600793728];
 
-// ========== I18N ==========
-const I18N = {
-  en: {
-    title: 'Nav Dashboard',
-    disconnected: 'Disconnected',
-    connected: 'Connected',
-    reconnecting: 'Disconnected, reconnecting in 3s',
-    csvLabel: 'CSV Route',
-    centerCurrent: 'Center Current',
-    editRoute: 'Edit Route',
-    doneEdit: 'Finish Edit',
-    undoNode: 'Undo Node',
-    startSim: 'Start Sim',
-    stopSim: 'Stop Sim',
-    exportRoute: 'Export CSV',
-    topNorth: 'Top North',
-    cardCurrent: 'Current Position',
-    latitude: 'Latitude',
-    longitude: 'Longitude',
-    source: 'Source',
-    satellites: 'Satellites',
-    speed: 'Speed',
-    cardMission: 'Mission Progress',
-    reached: 'Reached',
-    target: 'Target',
-    distance: 'Distance',
-    cardEvents: 'Events',
-    allReached: 'All reached',
-    missingTiles: 'Satellite unavailable, switched to offline map',
-    layerOffline: 'Offline Map (LAN/local)',
-    layerSat: 'Satellite (Esri)',
-    layerOsm: 'Street (OSM)',
-    csvMissingLatLon: 'CSV missing lat/lon columns',
-    cleared: 'Track and logs cleared',
-    noRoute: 'No route to export',
-    routeExported: 'Exported {count} route points',
-    reachedWp: 'Waypoint {id} reached ({dist} m)',
-    wsConnected: 'WebSocket connected',
-    simStopped: 'Simulation stopped',
-    simEmpty: 'No simulation path. Import CSV or edit route first',
-    simStarted: 'Simulation started, {count} points',
-    simDone: 'Simulation completed',
-    editOn: 'Edit mode on: click map to add points (tol={tolerance}m, speed={speed}m/s)',
-    editOff: 'Edit finished, generated {count} points',
-    undoDone: 'Removed latest node #{id}',
-    undoEmpty: 'No node to undo',
-    centered: 'Centered to current position',
-    loadedPoints: 'Loaded {count} route points',
-    csvLoadFail: 'CSV load failed: {message}',
-    boot1: 'System started',
-    langTitleZh: 'Switch to Chinese',
-    langTitleEn: 'Switch to English',
-  },
-  zh: {
-    title: 'Nav 导航面板',
-    disconnected: '未连接',
-    connected: '已连接',
-    reconnecting: '已断开，3 秒后重连',
-    csvLabel: 'CSV 路径',
-    centerCurrent: '回到当前位置',
-    editRoute: '编辑路径',
-    doneEdit: '结束编辑',
-    undoNode: '撤销节点',
-    startSim: '开始模拟',
-    stopSim: '停止模拟',
-    exportRoute: '导出CSV',
-    topNorth: '顶视北向',
-    cardCurrent: '当前位置',
-    latitude: '纬度',
-    longitude: '经度',
-    source: '来源',
-    satellites: '卫星',
-    speed: '速度',
-    cardMission: '任务进度',
-    reached: '已达',
-    target: '目标',
-    distance: '距离',
-    cardEvents: '事件',
-    allReached: '全部达到',
-    missingTiles: '卫星图不可用，已切换到离线地图',
-    layerOffline: '离线地图',
-    layerSat: '卫星图 (Esri)',
-    layerOsm: '普通地图 (OSM)',
-    csvMissingLatLon: 'CSV 缺少 lat/lon 列',
-    cleared: '已清空轨迹与日志',
-    noRoute: '暂无路径可导出',
-    routeExported: '已导出 {count} 个路径点',
-    reachedWp: '点位 {id} 已达 ({dist} m)',
-    wsConnected: 'WebSocket 已连接',
-    simStopped: '已停止模拟',
-    simEmpty: '没有可模拟路径',
-    simStarted: '开始模拟，共 {count} 个点',
-    simDone: '模拟完成',
-    editOn: '编辑模式：点击地图添加点位 (tol={tolerance}m, speed={speed}m/s)',
-    editOff: '编辑完成，已生成 {count} 个点位',
-    undoDone: '已撤销节点 #{id}',
-    undoEmpty: '无可撤销节点',
-    centered: '已回到当前位置',
-    loadedPoints: '已加载 {count} 个路径点',
-    csvLoadFail: 'CSV 加载失败: {message}',
-    boot1: '系统启动',
-    langTitleZh: '切换到中文',
-    langTitleEn: 'Switch to English',
-  }
+const STRINGS = {
+  title: 'Nav Dashboard',
+  disconnected: 'Disconnected',
+  connected: 'Connected',
+  reconnecting: 'Disconnected, reconnecting in 3s',
+  csvLabel: 'CSV Route',
+  centerCurrent: 'Center Current',
+  editRoute: 'Edit Route',
+  doneEdit: 'Finish Edit',
+  undoNode: 'Undo Node',
+  startSim: 'Start Sim',
+  stopSim: 'Stop Sim',
+  exportRoute: 'Export CSV',
+  topNorth: 'Top North',
+  cardCurrent: 'Current Position',
+  latitude: 'Latitude',
+  longitude: 'Longitude',
+  source: 'Source',
+  satellites: 'Satellites',
+  speed: 'Speed',
+  cardMission: 'Mission Progress',
+  reached: 'Reached',
+  target: 'Target',
+  distance: 'Distance',
+  cardEvents: 'Events',
+  allReached: 'All reached',
+  missingTiles: 'Satellite unavailable, switched to offline map',
+  layerOffline: 'Offline Map (LAN/local)',
+  layerSat: 'Satellite (Esri)',
+  layerOsm: 'Street (OSM)',
+  csvMissingLatLon: 'CSV missing lat/lon columns',
+  cleared: 'Track and logs cleared',
+  noRoute: 'No route to export',
+  routeExported: 'Exported {count} route points',
+  reachedWp: 'Waypoint {id} reached ({dist} m)',
+  wsConnected: 'WebSocket connected',
+  simStopped: 'Simulation stopped',
+  simEmpty: 'No simulation path. Import CSV or edit route first',
+  simStarted: 'Simulation started, {count} points',
+  simDone: 'Simulation completed',
+  editOn: 'Edit mode on: click map to add points (tol={tolerance}m, speed={speed}m/s)',
+  editOff: 'Edit finished, generated {count} points',
+  undoDone: 'Removed latest node #{id}',
+  undoEmpty: 'No node to undo',
+  centered: 'Centered to current position',
+  loadedPoints: 'Loaded {count} route points',
+  csvLoadFail: 'CSV load failed: {message}',
+  boot1: 'System started',
 };
-let currentLang = 'en';
 
 function t(key, vars = {}) {
-  const raw = I18N[currentLang][key] ?? I18N.en[key] ?? key;
-  return raw.replace(/\{(\w+)\}/g, (_, k) => `${vars[k] ?? ''}`);
+  const raw = STRINGS[key] ?? key;
+  return raw.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
 }
 
 // ========== DOM refs ==========
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const pageTitle = document.getElementById('pageTitle');
-const langToggle = document.getElementById('langToggle');
 const csvLabel = document.getElementById('csvLabel');
 const csvFile = document.getElementById('csvFile');
 const btnCenterCurrent = document.getElementById('btnCenterCurrent');
@@ -1106,40 +1048,8 @@ btnStartSim.addEventListener('click', startSimulation);
 btnExportRoute.addEventListener('click', exportRouteCsv);
 
 // Language toggle
-function applyLanguage() {
-  document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en';
-  document.title = t('title');
-  pageTitle.textContent = t('title');
-  csvLabel.childNodes[0].nodeValue = `${t('csvLabel')} `;
-  btnCenterCurrent.textContent = t('centerCurrent');
-  btnEditRoute.textContent = isEditMode ? t('doneEdit') : t('editRoute');
-  btnUndoNode.textContent = t('undoNode');
-  btnStartSim.textContent = simTimer ? t('stopSim') : t('startSim');
-  btnExportRoute.textContent = t('exportRoute');
-  btnTopNorth.textContent = t('topNorth');
-  cardCurrentTitle.textContent = t('cardCurrent');
-  labelLat.textContent = t('latitude');
-  labelLon.textContent = t('longitude');
-  labelSource.textContent = t('source');
-  labelSats.textContent = t('satellites');
-  labelSpeed.textContent = t('speed');
-  cardMissionTitle.textContent = t('cardMission');
-  labelReached.textContent = t('reached');
-  labelTarget.textContent = t('target');
-  labelDistance.textContent = t('distance');
-  cardEventTitle.textContent = t('cardEvents');
-  if (connectionState === 'connected') statusText.textContent = t('connected');
-  else if (connectionState === 'reconnecting') statusText.textContent = t('reconnecting');
-  else statusText.textContent = t('disconnected');
-  langToggle.title = currentLang === 'zh' ? t('langTitleEn') : t('langTitleZh');
-  renderLayerControl();
-}
-
-langToggle.addEventListener('click', () => {
-  currentLang = currentLang === 'zh' ? 'en' : 'zh';
-  applyLanguage();
-});
-
 // Boot
-applyLanguage();
+document.title = STRINGS.title;
+pageTitle.textContent = STRINGS.title;
+statusText.textContent = STRINGS.disconnected;
 addEvent(t('boot1'));

@@ -44,34 +44,46 @@
   <main>
     <div id="map"></div>
     <aside>
-      <div class="card">
-        <h3 id="cardCurrentTitle">Current Position</h3>
-        <div class="row"><span id="labelLat">Latitude</span><strong id="latVal">-</strong></div>
-        <div class="row"><span id="labelLon">Longitude</span><strong id="lonVal">-</strong></div>
-        <div class="row"><span id="labelSource">Source</span><strong id="srcVal">-</strong></div>
-        <div class="row"><span>Fix</span><strong id="fixVal">-</strong></div>
-        <div class="row"><span id="labelSats">Satellites</span><strong id="satVal">-</strong></div>
-        <div class="row"><span>HDOP</span><strong id="hdopVal">-</strong></div>
-        <div class="row"><span id="labelSpeed">Speed</span><strong id="spdVal">-</strong></div>
-      </div>
-      <div class="card">
-        <h3 id="cardDualTitle">Dual RTK Status</h3>
-        <div class="row"><span id="labelHeading">Heading</span><strong id="headingVal">-</strong></div>
-        <div class="row"><span id="labelBaseline">Baseline</span><strong id="baselineVal">-</strong></div>
-        <div id="dualRtkInfo" class="dual-rtk-info"></div>
-      </div>
-      <div class="card">
-        <h3 id="cardMissionTitle">Mission Progress</h3>
-        <div class="row"><span id="labelReached">Reached Waypoints</span><strong id="reachVal">0 / 0</strong></div>
-        <div class="row"><span id="labelTarget">Current Target</span><strong id="targetVal">-</strong></div>
-        <div class="row"><span id="labelDistance">Target Distance</span><strong id="distVal">-</strong></div>
-      </div>
-      <div class="card">
-        <h3 id="cardEventTitle">Events</h3>
+      <pre id="raw-json" style="background:#1a1a1a;color:#eee;font-family:monospace;font-size:0.78rem;line-height:1.5;padding:10px;border-radius:4px;overflow-x:auto;white-space:pre-wrap;margin:0;height:100%;box-sizing:border-box;">waiting...</pre>
+      <!-- hidden stubs to keep rtk_visualizer.js happy -->
+      <div style="display:none">
+        <h3 id="cardCurrentTitle"></h3>
+        <h3 id="cardDualTitle"></h3>
+        <h3 id="cardMissionTitle"></h3>
+        <h3 id="cardEventTitle"></h3>
+        <span id="labelLat"></span>
+        <span id="labelLon"></span>
+        <span id="labelSource"></span>
+        <span id="labelSats"></span>
+        <span id="labelSpeed"></span>
+        <span id="labelHeading"></span>
+        <span id="labelBaseline"></span>
+        <span id="labelReached"></span>
+        <span id="labelTarget"></span>
+        <span id="labelDistance"></span>
+        <strong id="latVal"></strong>
+        <strong id="lonVal"></strong>
+        <strong id="srcVal"></strong>
+        <strong id="fixVal"></strong>
+        <strong id="satVal"></strong>
+        <strong id="hdopVal"></strong>
+        <strong id="spdVal"></strong>
+        <strong id="headingVal"></strong>
+        <strong id="baselineVal"></strong>
+        <strong id="reachVal"></strong>
+        <strong id="targetVal"></strong>
+        <strong id="distVal"></strong>
+        <div id="dualRtkInfo"></div>
         <ul id="eventList"></ul>
       </div>
     </aside>
   </main>
+
+  <script>
+    const rawJson = document.getElementById('raw-json');
+    const wsData = new WebSocket('ws://localhost:8776');
+    wsData.onmessage = e => { rawJson.textContent = JSON.stringify(JSON.parse(e.data), null, 2); };
+  </script>
 
   <script>
     function loadCss(href) {
@@ -110,18 +122,8 @@
 
     async function boot() {
       try {
-        await loadFirst(
-          [
-            './assets/vendor/leaflet/leaflet.css'
-          ],
-          loadCss
-        );
-        await loadFirst(
-          [
-            './assets/vendor/leaflet/leaflet.js',
-          ],
-          loadScript
-        );
+        await loadFirst(['./assets/vendor/leaflet/leaflet.css'], loadCss);
+        await loadFirst(['./assets/vendor/leaflet/leaflet.js'], loadScript);
         await loadScript('rtk_visualizer.js');
       } catch (err) {
         console.error(err);

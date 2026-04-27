@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>BNO085 IMU Visualizer</title>
   <link rel="stylesheet" href="style.css" />
+  <style>
+    #raw-json { background: #1a1a1a; color: #eee; font-family: monospace; font-size: 0.78rem; line-height: 1.5; padding: 10px; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; flex: 1; margin: 0; }
+    #data-panel { display: flex; flex-direction: column; }
+  </style>
 </head>
 <body>
 
@@ -54,130 +58,16 @@
 
     <!-- 3D Canvas -->
     <div id="canvas-container">
-      <!-- Three.js canvas injected here by imu_visualizer.js -->
       <canvas id="compassCanvas"></canvas>
       <div class="canvas-hint">Drag to rotate · Scroll to zoom</div>
     </div>
 
     <!-- Data Panel -->
     <div id="data-panel">
+      <pre id="raw-json">waiting...</pre>
+    </div>
 
-      <!-- Rotation Vector -->
-      <div class="panel-section">
-        <h3>Rotation Vector</h3>
-        <div class="data-3axis">
-          <span class="axis-label">qi</span><span class="axis-value" id="rot_qi">–</span>
-          <span class="axis-label">qj</span><span class="axis-value" id="rot_qj">–</span>
-          <span class="axis-label">qk</span><span class="axis-value" id="rot_qk">–</span>
-        </div>
-        <div class="data-row" style="margin-top:4px">
-          <span class="label">qr</span><span class="value" id="rot_qr">–</span>
-        </div>
-      </div>
-
-      <!-- Heading -->
-      <div class="panel-section">
-        <h3>Heading (Game Rot)</h3>
-        <div class="data-row">
-          <span class="label">Angle</span>
-          <span class="value" id="heading_deg">–</span>
-        </div>
-        <div class="data-row">
-          <span class="label">Dir</span>
-          <span class="value" id="heading_dir" style="color:var(--cyan)">–</span>
-        </div>
-      </div>
-
-      <!-- Euler Angles -->
-      <div class="panel-section">
-        <h3>Euler Angles (deg)</h3>
-        <div class="data-3axis">
-          <span class="axis-label">Roll</span> <span class="axis-value" id="euler_roll">–</span>
-          <span class="axis-label">Pitch</span><span class="axis-value" id="euler_pitch">–</span>
-          <span class="axis-label">Yaw</span>  <span class="axis-value" id="euler_yaw">–</span>
-        </div>
-      </div>
-
-      <!-- Accelerometer -->
-      <div class="panel-section">
-        <h3>Accelerometer (m/s²)</h3>
-        <div class="data-3axis">
-          <span class="axis-label">x</span><span class="axis-value" id="accel_x">–</span>
-          <span class="axis-label">y</span><span class="axis-value" id="accel_y">–</span>
-          <span class="axis-label">z</span><span class="axis-value" id="accel_z">–</span>
-        </div>
-      </div>
-
-      <!-- Linear Acceleration -->
-      <div class="panel-section">
-        <h3>Linear Accel (m/s²)</h3>
-        <div class="data-3axis">
-          <span class="axis-label">x</span><span class="axis-value" id="lin_x">–</span>
-          <span class="axis-label">y</span><span class="axis-value" id="lin_y">–</span>
-          <span class="axis-label">z</span><span class="axis-value" id="lin_z">–</span>
-        </div>
-      </div>
-
-      <!-- Gravity -->
-      <div class="panel-section">
-        <h3>Gravity (m/s²)</h3>
-        <div class="data-3axis">
-          <span class="axis-label">x</span><span class="axis-value" id="grav_x">–</span>
-          <span class="axis-label">y</span><span class="axis-value" id="grav_y">–</span>
-          <span class="axis-label">z</span><span class="axis-value" id="grav_z">–</span>
-        </div>
-      </div>
-
-      <!-- Gyroscope -->
-      <div class="panel-section">
-        <h3>Gyroscope (rad/s)</h3>
-        <div class="data-3axis">
-          <span class="axis-label">x</span><span class="axis-value" id="gyro_x">–</span>
-          <span class="axis-label">y</span><span class="axis-value" id="gyro_y">–</span>
-          <span class="axis-label">z</span><span class="axis-value" id="gyro_z">–</span>
-        </div>
-      </div>
-
-      <!-- Game Rotation Vector -->
-      <div class="panel-section">
-        <h3>Game Rot (no mag)</h3>
-        <div class="data-3axis">
-          <span class="axis-label">qi</span><span class="axis-value" id="game_qi">–</span>
-          <span class="axis-label">qj</span><span class="axis-value" id="game_qj">–</span>
-          <span class="axis-label">qk</span><span class="axis-value" id="game_qk">–</span>
-        </div>
-        <div class="data-row" style="margin-top:4px">
-          <span class="label">qr</span><span class="value" id="game_qr">–</span>
-        </div>
-      </div>
-
-      <!-- Magnetometer -->
-      <div class="panel-section">
-        <h3>Magnetometer (µT)</h3>
-        <div class="data-3axis">
-          <span class="axis-label">x</span><span class="axis-value" id="mag_x">–</span>
-          <span class="axis-label">y</span><span class="axis-value" id="mag_y">–</span>
-          <span class="axis-label">z</span><span class="axis-value" id="mag_z">–</span>
-        </div>
-      </div>
-
-      <!-- Status footer -->
-      <div class="status-row">
-        <div>
-          <span style="color:var(--text-muted);font-size:0.78rem">Steps: </span>
-          <span id="steps" style="font-size:0.78rem">–</span>
-        </div>
-        <div class="cal-badge cal-0" id="calBadge">
-          <span class="cal-dot"></span>
-          <span id="calText">Cal: –</span>
-        </div>
-        <div class="hz-display">
-          <span id="hzDisplay">– Hz</span>
-        </div>
-      </div>
-
-    </div><!-- #data-panel -->
-  </div><!-- .main-container -->
+  </div>
 
   <!-- Three.js via CDN -->
   <script type="importmap">
@@ -189,6 +79,11 @@
   }
   </script>
   <script type="module" src="imu_visualizer.js"></script>
+  <script>
+    const rawJson = document.getElementById('raw-json');
+    const ws = new WebSocket('ws://localhost:8766');
+    ws.onmessage = e => { rawJson.textContent = JSON.stringify(JSON.parse(e.data), null, 2); };
+  </script>
 
 </body>
 </html>

@@ -7,7 +7,8 @@ pip install pyserial websockets depthai opencv-python numpy
 ./start_bridges.sh
 ```
 
-Opens modules 01_IMU · 02_RTK · 03_Nav · 04_Robot · 06_Camera in one tmux session.
+Opens modules 01_IMU · 02_RTK · 03_Nav · 04_Robot · 06_Camera in one tmux session with separate windows.
+Ctrl+C stops the process in the current window but leaves the tmux window open.
 Detach: `Ctrl-B D` · Kill: `tmux kill-session -t bridges`
 
 ---
@@ -69,7 +70,7 @@ Each bridge serves its own static web UI over HTTP:
 ```
 IMU_GPS/
 ├── config.py                    # ★ Unified hyperparameter config for all modules (01–06)
-├── start_bridges.sh             # ★ One-command tmux launcher (01–04 + 06, tiled layout)
+├── start_bridges.sh             # ★ One-command tmux launcher (01–04 + 06, separate windows)
 │
 ├── 01_IMU/
 │   ├── bno085_esp32c3/          # ESP32-C3 Arduino firmware (SPI, 50 Hz JSON)
@@ -171,16 +172,14 @@ pip install pyserial websockets
 ./start_bridges.sh
 ```
 
-Opens modules 01–04 and 06 in a single tmux session with tiled layout:
+Opens modules 01–04 and 06 in a single tmux session with separate windows:
 
 ```
-┌──────────────┬──────────────┐
-│  01_IMU      │  02_RTK      │
-├──────────────┼──────────────┤
-│  03_Nav      │  04_Robot    │
-├──────────────┴──────────────┤
-│        06_Camera            │
-└─────────────────────────────┘
+Window 1: 01_IMU
+Window 2: 02_RTK
+Window 3: 03_Nav
+Window 4: 04_Robot
+Window 5: 06_Camera
 ```
 
 - Detach: `Ctrl-B D`

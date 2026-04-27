@@ -1,148 +1,74 @@
 const DEFAULT_POS = [38.9412928598587, -92.31884600793728];
 const WS_URL = `ws://${window.location.hostname}:${Number(window.location.port || 8775) + 1}`;
-const I18N = {
-  en: {
-    title: 'RTK Path Visualizer',
-    disconnected: 'Disconnected',
-    connected: 'Connected',
-    reconnecting: 'Disconnected, reconnecting in 3s',
-    csvLabel: 'CSV Route File',
-    rtkSource: 'RTK Source',
-    findMe: 'Find Me',
-    centerCurrent: 'Center Current',
-    editRoute: 'Edit Route',
-    doneEdit: 'Finish Edit',
-    undoNode: 'Undo Node',
-    startSim: 'Start Simulation',
-    stopSim: 'Stop Simulation',
-    exportRoute: 'Export Route CSV',
-    clearTrack: 'Clear Track',
-    exportLog: 'Export Log',
-    cardCurrent: 'Current Position',
-    cardDual: 'Dual RTK Status',
-    latitude: 'Latitude',
-    longitude: 'Longitude',
-    source: 'Source',
-    heading: 'Heading',
-    baseline: 'Baseline',
-    status: 'Status',
-    fix: 'Fix',
-    satellites: 'Satellites',
-    speed: 'Speed',
-    online: 'Online',
-    offline: 'Offline',
-    noFix: 'No Fix',
-    headingInvalid: 'invalid',
-    cardMission: 'Mission Progress',
-    reached: 'Reached Waypoints',
-    target: 'Current Target',
-    distance: 'Target Distance',
-    cardEvents: 'Events',
-    allReached: 'All reached',
-    missingTiles: 'Satellite unavailable, switched to offline map',
-    layerOffline: 'Offline Map (LAN/local)',
-    layerSat: 'Satellite (Esri)',
-    layerOsm: 'Street (OSM)',
-    csvMissingLatLon: 'CSV missing lat/lon columns',
-    cleared: 'Track and logs cleared',
-    noLogs: 'No logs to export',
-    noRoute: 'No route to export',
-    routeExported: 'Exported {count} route points',
-    reachedWp: 'Waypoint {id} reached ({dist} m)',
-    wsConnected: 'WebSocket connected {url}',
-    simStopped: 'Simulation stopped',
-    simEmpty: 'No simulation path. Import CSV or edit route first',
-    simStarted: 'Simulation started, {count} points',
-    simDone: 'Simulation completed',
-    editOn: 'Edit mode on: click map to add points (tol={tolerance}m, speed={speed}m/s)',
-    editOff: 'Edit finished, generated {count} points',
-    undoDone: 'Removed latest node #{id}',
-    undoEmpty: 'No node to undo',
-    geoUnsupported: 'Geolocation is not supported by this browser',
-    geoOk: 'Located {lat}, {lon}',
-    geoFail: 'Locate failed: {message}',
-    centered: 'Centered to current position {lat}, {lon}',
-    loadedPoints: 'Loaded {count} route points',
-    csvLoadFail: 'CSV load failed: {message}',
-    boot1: 'System started, default location loaded',
-    boot2: 'Default base map is satellite map',
-    langTitleZh: 'Switch to Chinese',
-    langTitleEn: 'Switch to English',
-  },
-  zh: {
-    title: 'RTK 路径可视化',
-    disconnected: '未连接',
-    connected: '已连接',
-    reconnecting: '已断开，3 秒后重连',
-    csvLabel: 'CSV 路径文件',
-    rtkSource: 'RTK 来源',
-    findMe: '定位我',
-    centerCurrent: '回到当前位置',
-    editRoute: '编辑路径',
-    doneEdit: '结束编辑',
-    undoNode: '撤销节点',
-    startSim: '开始模拟',
-    stopSim: '停止模拟',
-    exportRoute: '导出路径CSV',
-    clearTrack: '清空轨迹',
-    exportLog: '导出日志',
-    cardCurrent: '当前位置',
-    cardDual: '双RTK状态',
-    latitude: '纬度',
-    longitude: '经度',
-    source: '来源',
-    heading: '航向',
-    baseline: '基线长度',
-    status: '状态',
-    fix: '定位',
-    satellites: '卫星',
-    speed: '速度',
-    online: '在线',
-    offline: '离线',
-    noFix: '无定位',
-    headingInvalid: '无效',
-    cardMission: '任务进度',
-    reached: '已满足点位',
-    target: '当前目标',
-    distance: '目标距离',
-    cardEvents: '事件记录',
-    allReached: '全部满足',
-    missingTiles: '卫星图不可用，已自动切换到离线地图',
-    layerOffline: '离线地图 (LAN/本地)',
-    layerSat: '卫星图 (Esri)',
-    layerOsm: '普通地图 (OSM)',
-    csvMissingLatLon: 'CSV 缺少 lat/lon 列',
-    cleared: '已清空轨迹与日志',
-    noLogs: '暂无日志可导出',
-    noRoute: '暂无路径可导出',
-    routeExported: '已导出路径点 {count} 个',
-    reachedWp: '点位 {id} 已满足 ({dist} m)',
-    wsConnected: 'WebSocket 已连接 {url}',
-    simStopped: '已停止模拟',
-    simEmpty: '没有可模拟路径，请先导入 CSV 或编辑路径',
-    simStarted: '开始模拟，共 {count} 个轨迹点',
-    simDone: '模拟完成',
-    editOn: '编辑模式开启：点击地图添加点位 (tol={tolerance}m, speed={speed}m/s)',
-    editOff: '编辑完成，已生成 {count} 个点位',
-    undoDone: '已撤销最近节点 #{id}',
-    undoEmpty: '当前没有可撤销节点',
-    geoUnsupported: '浏览器不支持定位',
-    geoOk: '定位成功 {lat}, {lon}',
-    geoFail: '定位失败: {message}',
-    centered: '已回到当前位置 {lat}, {lon}',
-    loadedPoints: '已加载路径点 {count} 个',
-    csvLoadFail: 'CSV 加载失败: {message}',
-    boot1: '系统启动，默认位置已设定',
-    boot2: '当前默认底图为卫星图',
-    langTitleZh: '切换到中文',
-    langTitleEn: 'Switch to English',
-  }
+const STRINGS = {
+  title: 'RTK Path Visualizer',
+  disconnected: 'Disconnected',
+  connected: 'Connected',
+  reconnecting: 'Disconnected, reconnecting in 3s',
+  csvLabel: 'CSV Route File',
+  rtkSource: 'RTK Source',
+  findMe: 'Find Me',
+  centerCurrent: 'Center Current',
+  editRoute: 'Edit Route',
+  doneEdit: 'Finish Edit',
+  undoNode: 'Undo Node',
+  startSim: 'Start Simulation',
+  stopSim: 'Stop Simulation',
+  exportRoute: 'Export Route CSV',
+  clearTrack: 'Clear Track',
+  exportLog: 'Export Log',
+  cardCurrent: 'Current Position',
+  cardDual: 'Dual RTK Status',
+  latitude: 'Latitude',
+  longitude: 'Longitude',
+  source: 'Source',
+  heading: 'Heading',
+  baseline: 'Baseline',
+  fix: 'Fix',
+  satellites: 'Satellites',
+  speed: 'Speed',
+  online: 'Online',
+  offline: 'Offline',
+  noFix: 'No Fix',
+  headingInvalid: 'invalid',
+  cardMission: 'Mission Progress',
+  reached: 'Reached Waypoints',
+  target: 'Current Target',
+  distance: 'Target Distance',
+  cardEvents: 'Events',
+  allReached: 'All reached',
+  missingTiles: 'Satellite unavailable, switched to offline map',
+  layerOffline: 'Offline Map (LAN/local)',
+  layerSat: 'Satellite (Esri)',
+  layerOsm: 'Street (OSM)',
+  csvMissingLatLon: 'CSV missing lat/lon columns',
+  cleared: 'Track and logs cleared',
+  noLogs: 'No logs to export',
+  noRoute: 'No route to export',
+  routeExported: 'Exported {count} route points',
+  reachedWp: 'Waypoint {id} reached ({dist} m)',
+  wsConnected: 'WebSocket connected {url}',
+  simStopped: 'Simulation stopped',
+  simEmpty: 'No simulation path. Import CSV or edit route first',
+  simStarted: 'Simulation started, {count} points',
+  simDone: 'Simulation completed',
+  editOn: 'Edit mode on: click map to add points (tol={tolerance}m, speed={speed}m/s)',
+  editOff: 'Edit finished, generated {count} points',
+  undoDone: 'Removed latest node #{id}',
+  undoEmpty: 'No node to undo',
+  geoUnsupported: 'Geolocation is not supported by this browser',
+  geoOk: 'Located {lat}, {lon}',
+  geoFail: 'Locate failed: {message}',
+  centered: 'Centered to current position {lat}, {lon}',
+  loadedPoints: 'Loaded {count} route points',
+  csvLoadFail: 'CSV load failed: {message}',
+  boot1: 'System started, default location loaded',
+  boot2: 'Default base map is satellite map',
 };
-let currentLang = 'en';
 
 function t(key, vars = {}) {
-  const raw = I18N[currentLang][key] ?? I18N.en[key] ?? key;
-  return raw.replace(/\{(\w+)\}/g, (_, k) => `${vars[k] ?? ''}`);
+  const raw = STRINGS[key] ?? key;
+  return raw.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
 }
 
 const map = L.map('map').setView(DEFAULT_POS, 19);
@@ -219,7 +145,6 @@ const pageTitle = document.getElementById('pageTitle');
 const csvLabel = document.getElementById('csvLabel');
 const rtkSourceLabel = document.getElementById('rtkSourceLabel');
 const rtkSourceSelect = document.getElementById('rtkSourceSelect');
-const langToggle = document.getElementById('langToggle');
 const csvFile = document.getElementById('csvFile');
 const btnFindMe = document.getElementById('btnFindMe');
 const btnCenterCurrent = document.getElementById('btnCenterCurrent');
@@ -274,6 +199,7 @@ let logs = [];
 let isEditMode = false;
 let simPath = [];
 let simTimer = null;
+let hasFirstFix = false;
 let connectionState = 'disconnected';
 
 function sourceColor(sourceId, index = 0) {
@@ -414,45 +340,6 @@ function syncDualRtkMap(frame, sourceFrames) {
     iconAnchor: [18, 6],
   });
   headingArrowMarker = L.marker([bLat, bLon], { icon, interactive: false }).addTo(map);
-}
-
-function applyLanguage() {
-  document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en';
-  document.title = t('title');
-  pageTitle.textContent = t('title');
-  csvLabel.childNodes[0].nodeValue = `${t('csvLabel')} `;
-  rtkSourceLabel.childNodes[0].nodeValue = `${t('rtkSource')} `;
-  btnFindMe.textContent = t('findMe');
-  btnCenterCurrent.textContent = t('centerCurrent');
-  btnEditRoute.textContent = isEditMode ? t('doneEdit') : t('editRoute');
-  btnUndoNode.textContent = t('undoNode');
-  btnStartSim.textContent = simTimer ? t('stopSim') : t('startSim');
-  btnExportRoute.textContent = t('exportRoute');
-  btnClearTrack.textContent = t('clearTrack');
-  btnExportLog.textContent = t('exportLog');
-  cardCurrentTitle.textContent = t('cardCurrent');
-  if (cardDualTitle) cardDualTitle.textContent = t('cardDual');
-  labelLat.textContent = t('latitude');
-  labelLon.textContent = t('longitude');
-  labelSource.textContent = t('source');
-  if (labelHeading) labelHeading.textContent = t('heading');
-  if (labelBaseline) labelBaseline.textContent = t('baseline');
-  labelSats.textContent = t('satellites');
-  labelSpeed.textContent = t('speed');
-  cardMissionTitle.textContent = t('cardMission');
-  labelReached.textContent = t('reached');
-  labelTarget.textContent = t('target');
-  labelDistance.textContent = t('distance');
-  cardEventTitle.textContent = t('cardEvents');
-  if (connectionState === 'connected') {
-    statusText.textContent = t('connected');
-  } else if (connectionState === 'reconnecting') {
-    statusText.textContent = t('reconnecting');
-  } else {
-    statusText.textContent = t('disconnected');
-  }
-  langToggle.title = currentLang === 'zh' ? t('langTitleEn') : t('langTitleZh');
-  renderLayerControl();
 }
 
 function waypointTooltipHtml(wp, idx) {
@@ -720,6 +607,12 @@ function updateByFrame(frame) {
 
   const point = [lat, lon];
   currentMarker.setLatLng(point);
+
+  if (!hasFirstFix && frame.source === 'rtk') {
+    hasFirstFix = true;
+    console.log('First RTK fix, moving map to', point);
+    map.setView(point, map.getZoom());
+  }
 
   const sourceFrames = Array.isArray(frame.rtk_source_frames) ? frame.rtk_source_frames : [];
   renderDualRtkInfo(frame, sourceFrames);
@@ -1064,12 +957,10 @@ btnExportLog.addEventListener('click', exportLogs);
 
 map.on('click', addWaypointByMapClick);
 
-langToggle.addEventListener('click', () => {
-  currentLang = currentLang === 'zh' ? 'en' : 'zh';
-  applyLanguage();
-});
 
-applyLanguage();
+document.title = STRINGS.title;
+pageTitle.textContent = STRINGS.title;
+statusText.textContent = STRINGS.disconnected;
 connectionState = 'disconnected';
 statusText.textContent = t('disconnected');
 addEvent(t('boot1'));
