@@ -49,14 +49,18 @@ import autonav_algo as algo
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-HTTP_PORT          = _cfg.AUTONAV_WS_PORT if _cfg else 8805
+def _c(attr, default):
+    return getattr(_cfg, attr, default) if _cfg else default
+
+HTTP_PORT          = _c("AUTONAV_WS_PORT",           8805)
 WS_PORT            = HTTP_PORT + 1                        # 8806
-IMU_WS_URL         = _cfg.AUTONAV_IMU_WS  if _cfg else "ws://localhost:8766"
-RTK_WS_URL         = _cfg.AUTONAV_RTK_WS  if _cfg else "ws://localhost:8776"
+IMU_WS_URL         = _c("AUTONAV_IMU_WS",           "ws://localhost:8766")
+RTK_WS_URL         = _c("AUTONAV_RTK_WS",           "ws://localhost:8776")
 ROBOT_WS_URL       = "ws://localhost:8889"
-GPS_TIMEOUT_S      = _cfg.AUTONAV_GPS_TIMEOUT_S  if _cfg else 5.0
-CONTROL_HZ         = _cfg.AUTONAV_CONTROL_HZ     if _cfg else 5.0
-MANUAL_SPEED       = _cfg.AUTONAV_MANUAL_SPEED   if _cfg else 0.4
+GPS_TIMEOUT_S      = _c("AUTONAV_GPS_TIMEOUT_S",     5.0)
+CONTROL_HZ         = _c("AUTONAV_CONTROL_HZ",        5.0)
+MANUAL_SPEED       = _c("AUTONAV_MANUAL_SPEED",      0.4)
+ARRIVE_FRAMES      = _c("AUTONAV_ARRIVE_FRAMES",     1)
 HEARTBEAT_INTERVAL = 1.0
 
 PATH_FILE = Path(__file__).parent / "path.csv"
@@ -370,9 +374,25 @@ class AutoNavLoop:
         self._speed_ratio: float = 1.0
         self._manual_linear: float = 0.0   # set by manual_drive command
 
+        # arrival / confirmation state moved from algo into the bridge
+        self._arrive_counter: int = 0
+        self._waiting_at_wp: bool = False
+        self._confirm_advance: bool = False
+
         # ── Heading calibration state ─────────────────────────────────────────
         self._calib_mark: dict | None = None   # {lat, lon} of marked forward point
         self._calib_offset_applied: float | None = None  # last applied offset
+
+    # --------------------- Algorithm control helpers ---------------------
+    def reset(self) -> None:
+        """Reset internal arrival/waiting state (moved from algo)."""
+        self._arrive_counter = 0
+        self._waiting_at_wp = False
+        self._confirm_advance = False
+
+    def confirm_wp(self) -> None:
+        """Called when UI confirms advancing from a waiting waypoint."""
+        self._confirm_advance = True
 
     # ── State control (called from WS message handler) ────────────────────────
 
@@ -382,13 +402,14 @@ class AutoNavLoop:
             return
         self._wp_idx = 0
         self._paused_by_timeout = False
-        algo.reset()
+        self.reset()
         self._state = "running"
         logger.info("Navigation started (%d waypoints)", len(self._waypoints))
 
     def cmd_stop(self) -> None:
-        algo.reset()
+        self.reset()
         self._state = "idle"
+        self._manual_linear = 0.0
         self._robot.flush_stop()
         logger.info("Navigation stopped")
 
@@ -461,11 +482,12 @@ class AutoNavLoop:
         if self._state == "running":
             self._state = "paused"
             self._paused_by_timeout = False
+            self._manual_linear = 0.0
             self._robot.flush_stop()
 
     def cmd_resume(self) -> None:
         if self._state == "paused":
-            algo.reset()
+            self.reset()
             self._state = "running"
             self._paused_by_timeout = False
 
@@ -486,10 +508,6 @@ class AutoNavLoop:
             imu_raw = self._imu.latest
             rtk_raw = self._rtk.latest
 
-            if algo.ALGO_DEBUG:
-                logger.debug(f"[RAW IMU] {json.dumps(imu_raw)}")
-                logger.debug(f"[RAW RTK] {json.dumps(rtk_raw)}")
-
             # ── Extract values from raw dicts ─────────────────────────────────
             heading = None
             hblock = imu_raw.get("heading", {})
@@ -506,13 +524,9 @@ class AutoNavLoop:
             gps_age = now - gps_ts
             imu_age = now - imu_ts
 
-            if algo.ALGO_DEBUG:
-                logger.debug(f"[EXTRACTED] heading={heading} lat={lat} lon={lon} "
-                             f"gps_age={gps_age:.2f}s imu_age={imu_age:.2f}s")
             # ─────────────────────────────────────────────────────────────────
 
             linear, angular = 0.0, 0.0
-            debug: dict = {}
 
             # ── State machine ─────────────────────────────────────────────────
             sensors_ok = (
@@ -526,7 +540,7 @@ class AutoNavLoop:
                 logger.warning("Sensor timeout — GPS age=%.1fs IMU age=%.1fs", gps_age, imu_age)
 
             if self._state == "paused" and self._paused_by_timeout and sensors_ok:
-                algo.reset()
+                self.reset()
                 self._state = "running"
                 self._paused_by_timeout = False
                 logger.info("Sensors recovered — auto-resuming")
@@ -534,16 +548,42 @@ class AutoNavLoop:
             if self._state == "running" and sensors_ok:
                 # ── Call algorithm ────────────────────────────────────────────
                 prev_wp = self._wp_idx
-                linear, angular, self._wp_idx, arrived, debug = algo.compute(
+                linear, angular, arrived = algo.compute(
                     lat=lat, lon=lon, heading_deg=heading,
                     waypoints=self._waypoints, wp_idx=self._wp_idx, dt_s=dt,
                 )
-                # ─────────────────────────────────────────────────────────────
+                # algo.compute() returns arrived=True when within REACH_TOL_M of current wp
+                # Bridge handles ARRIVE_FRAMES counting and waypoint confirmation.
+                if self._waiting_at_wp:
+                    # Already at a waypoint, waiting for user to confirm advance
+                    if self._confirm_advance:
+                        self._wp_idx += 1
+                        self._arrive_counter = 0
+                        self._confirm_advance = False
+                        self._waiting_at_wp = False
+                    else:
+                        # Hold position
+                        linear, angular = 0.0, 0.0
+                else:
+                    # Try to reach current waypoint
+                    if arrived:
+                        self._arrive_counter += 1
+                        if self._arrive_counter >= ARRIVE_FRAMES:
+                            # Confirmed at waypoint for ARRIVE_FRAMES cycles
+                            self._arrive_counter = 0
+                            if self._wp_idx >= len(self._waypoints) - 1:
+                                # Final waypoint reached
+                                self._state = "arrived"
+                                logger.info("Arrived at destination")
+                            else:
+                                # Intermediate waypoint: enter waiting state
+                                self._waiting_at_wp = True
+                                linear, angular = 0.0, 0.0
+                    else:
+                        self._arrive_counter = 0
+                
                 if self._wp_idx > prev_wp:
                     logger.info("Waypoint %d/%d reached", self._wp_idx, len(self._waypoints))
-                if arrived:
-                    self._state = "arrived"
-                    logger.info("Arrived at destination")
 
             # ── Send to robot ─────────────────────────────────────────────────
             if self._state == "idle":
@@ -564,11 +604,6 @@ class AutoNavLoop:
                 "state":              self._state,
                 "current_wp_idx":     self._wp_idx,
                 "total_wp":           len(self._waypoints),
-                "dist_to_wp_m":       debug.get("dist_to_wp_m"),
-                "dist_to_final_m":    debug.get("dist_to_final_m"),
-                "target_bearing_deg": debug.get("target_bearing_deg"),
-                "heading_deg":        debug.get("heading_filtered_deg"),
-                "bearing_error_deg":  debug.get("bearing_error_deg"),
                 "linear":             round(linear, 3),
                 "angular":            round(angular, 3),
                 "gps_age_s":          round(gps_age, 2),
@@ -577,10 +612,7 @@ class AutoNavLoop:
                 "manual_speed":       MANUAL_SPEED,
                 "calib":              self.calib_status(),
                 "waypoints_window":   self._get_wp_window(),
-                "waiting_at_wp":      debug.get("waiting_at_wp", False),
-                "waiting_wp_idx":     debug.get("waiting_wp_idx"),
-                "imu_raw":            imu_raw,
-                "rtk_raw":            rtk_raw,
+                "waiting_at_wp":      self._waiting_at_wp,
             }
             try:
                 self._queue.put_nowait(json.dumps(status))
@@ -667,7 +699,11 @@ class AutoNavBridge:
         elif t == "manual_drive":
             self._nav_loop.cmd_manual(float(msg.get("linear", 0.0)))
         elif t == "confirm_wp":
-            algo.confirm_wp()
+            # forward to nav loop wrapper
+            try:
+                self._nav_loop.confirm_wp()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

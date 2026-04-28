@@ -49,7 +49,7 @@ ROBOT_SERIAL_BAUD      = 115200                    # Serial baud rate
 ROBOT_SERIAL_TIMEOUT   = 1.0                       # Serial read timeout (seconds)
 ROBOT_MAX_LINEAR       = 1.0                       # Max linear velocity (m/s)
 ROBOT_MAX_ANGULAR      = 1.0                       # Max angular velocity (rad/s)
-ROBOT_WATCHDOG_TIMEOUT = 2.0                       # Watchdog timeout (seconds); triggers e-stop
+ROBOT_WATCHDOG_TIMEOUT = 1.0                       # Watchdog timeout (seconds); triggers e-stop
 ROBOT_RECORD_INTERVAL  = 1.0                       # Recording sample interval (seconds); min 0.2
 
 
@@ -63,32 +63,6 @@ AUTONAV_RTK_WS          = "ws://localhost:8776"     # rtk_bridge WebSocket URL
 AUTONAV_ROBOT_WS        = "ws://localhost:8889"     # robot_bridge WebSocket URL
 AUTONAV_GPS_TIMEOUT_S   = 5.0                       # GPS data timeout (seconds)
 AUTONAV_CONTROL_HZ      = 5.0                       # Navigation control loop frequency (Hz)
-
-# ── Path / waypoints ──────────────────────────────────────────────────────────
-AUTONAV_LOOKAHEAD_M     = 1.0   # Pure Pursuit lookahead distance (m); larger = smoother path, smaller = tighter tracking
-AUTONAV_REACH_TOL_M     = 0.5   # Waypoint arrival radius (m); RTK cm accuracy supports values as low as 0.3
-AUTONAV_ARRIVE_FRAMES   = 1     # Consecutive frames inside arrival radius to confirm; 1 is reliable with RTK
-AUTONAV_DECEL_RADIUS_M  = 1.5   # Deceleration distance before final waypoint (m); increase for heavier robots
-
-# ── Speed ─────────────────────────────────────────────────────────────────────
-AUTONAV_MAX_LINEAR_VEL  = 1.0   # Max forward speed (m/s)
-AUTONAV_MIN_LINEAR_VEL  = 0.1   # Min speed during end-of-path deceleration (m/s)
-AUTONAV_MAX_ANGULAR_VEL = 1.0   # Max angular velocity (rad/s)
-AUTONAV_MANUAL_SPEED    = 0.4   # W/S manual straight-drive speed (m/s)
-
-# ── Steering behaviour ────────────────────────────────────────────────────────
-AUTONAV_TURN_IN_PLACE_DEG = 10.0  # Stop forward motion and rotate in place above this error (°); 0 = disabled
-AUTONAV_TURN_SLOWDOWN     = True  # Scale linear speed down proportionally with heading error
-AUTONAV_DEAD_ZONE_DEG     = 3.0   # Ignore heading errors smaller than this (°); prevents micro-corrections
-
-# ── PID gains ─────────────────────────────────────────────────────────────────
-AUTONAV_PID_KP          = 0.15   # Proportional gain; too high → oscillation, too low → slow response
-AUTONAV_PID_KI          = 0.005  # Integral gain; corrects persistent offset, too high → wind-up oscillation
-AUTONAV_PID_KD          = 0.15   # Derivative gain; damps overshoot, too high → jitter
-
-# ── Filters ───────────────────────────────────────────────────────────────────
-AUTONAV_MA_WINDOW       = 5      # GPS sliding-average window (frames); larger = smoother but more lag
-AUTONAV_HEADING_ALPHA   = 0.3    # Heading low-pass coefficient (0–1); larger = faster response
 
 
 # ══════════════════════════════════════════════════════════════════════════════
