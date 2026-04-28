@@ -597,6 +597,19 @@ class AutoNavLoop:
                 send_angular = 0.0
             await self._robot.send(round(send_linear, 3), round(send_angular, 3))
 
+            # ── Derived display metrics ───────────────────────────────────────
+            dist_to_wp_m       = None
+            target_bearing_deg = None
+            bearing_error_deg  = None
+            if lat is not None and lon is not None and self._wp_idx < len(self._waypoints):
+                wp = self._waypoints[self._wp_idx]
+                dist_to_wp_m = algo._fast_distance_m(lat, lon, wp["lat"], wp["lon"])
+                target_bearing_deg = algo._fast_bearing(lat, lon, wp["lat"], wp["lon"])
+                if heading is not None:
+                    bearing_error_deg = round((target_bearing_deg - heading + 180) % 360 - 180, 1)
+                dist_to_wp_m = round(dist_to_wp_m, 2)
+                target_bearing_deg = round(target_bearing_deg, 1)
+
             # ── Broadcast status ──────────────────────────────────────────────
             status = {
                 "type":               "autonav_status",
@@ -604,6 +617,10 @@ class AutoNavLoop:
                 "state":              self._state,
                 "current_wp_idx":     self._wp_idx,
                 "total_wp":           len(self._waypoints),
+                "heading_deg":        heading,
+                "target_bearing_deg": target_bearing_deg,
+                "bearing_error_deg":  bearing_error_deg,
+                "dist_to_wp_m":       dist_to_wp_m,
                 "linear":             round(linear, 3),
                 "angular":            round(angular, 3),
                 "gps_age_s":          round(gps_age, 2),
@@ -613,6 +630,9 @@ class AutoNavLoop:
                 "calib":              self.calib_status(),
                 "waypoints_window":   self._get_wp_window(),
                 "waiting_at_wp":      self._waiting_at_wp,
+                "waiting_wp_idx":     self._wp_idx if self._waiting_at_wp else None,
+                "imu_raw":            imu_raw,
+                "rtk_raw":            rtk_raw,
             }
             try:
                 self._queue.put_nowait(json.dumps(status))
