@@ -46,6 +46,33 @@
         <button id="btn-resume" class="ctrl-btn btn-resume">RESUME</button>
       </div>
 
+      <!-- Manual drive -->
+      <div id="manual-drive">
+        <button id="btn-fwd" class="ctrl-btn btn-fwd">▲ W</button>
+        <button id="btn-bwd" class="ctrl-btn btn-bwd">▼ S</button>
+      </div>
+
+      <!-- Heading calibration -->
+      <div id="calib-panel">
+        <div class="calib-row">
+          <button id="btn-mark"      class="ctrl-btn btn-mark">MARK POS</button>
+          <button id="btn-calibrate" class="ctrl-btn btn-calibrate">CALIBRATE</button>
+        </div>
+        <div id="calib-info">
+          <div class="calib-line"><span class="calib-label">MARKED</span><span id="calib-marked">—</span></div>
+          <div class="calib-line"><span class="calib-label">CURRENT</span><span id="calib-current">—</span></div>
+          <div class="calib-line"><span class="calib-label">BEARING</span><span id="calib-bearing">—</span></div>
+          <div class="calib-line"><span class="calib-label">OFFSET</span><span id="calib-offset">—</span></div>
+        </div>
+      </div>
+
+      <!-- CSV import -->
+      <div id="csv-ctrl">
+        <label class="ctrl-btn btn-csv" for="csv-input">LOAD CSV</label>
+        <input id="csv-input" type="file" accept=".csv" style="display:none">
+        <span id="csv-filename">path.csv (default)</span>
+      </div>
+
       <!-- Speed slider -->
       <div id="speed-ctrl">
         <span class="spd-label">SPD</span>
@@ -103,6 +130,13 @@
       <div class="json-block">
         <div class="json-type">autonav_status</div>
         <pre id="json-status">waiting…</pre>
+      </div>
+      <div id="wp-panel">
+        <div class="json-type">waypoints</div>
+        <table id="wp-table">
+          <thead><tr><th>#</th><th>lat</th><th>lon</th></tr></thead>
+          <tbody id="wp-tbody"></tbody>
+        </table>
       </div>
     </div>
 

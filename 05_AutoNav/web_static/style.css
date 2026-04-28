@@ -152,6 +152,51 @@ body {
 .btn-pause  { border-color: var(--yellow); color: var(--yellow); }
 .btn-resume { border-color: var(--blue);   color: var(--blue); }
 
+/* ── Manual drive ── */
+#manual-drive {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+.btn-fwd { border-color: var(--blue);  color: var(--blue);  flex: 1; }
+.btn-bwd { border-color: var(--dim);   color: var(--dim);   flex: 1; }
+#manual-drive .ctrl-btn { font-size: 13px; padding: 10px 0; }
+
+/* ── Heading calibration ── */
+#calib-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  width: 100%;
+  flex-shrink: 0;
+  margin-bottom: 10px;
+}
+.calib-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.btn-mark      { border-color: var(--orange); color: var(--orange); }
+.btn-calibrate { border-color: var(--green);  color: var(--green);  }
+#calib-info { display: flex; flex-direction: column; gap: 3px; }
+.calib-line { display: flex; justify-content: space-between; font-size: 11px; }
+.calib-label { color: var(--dim); letter-spacing: 1px; }
+#calib-marked, #calib-current, #calib-bearing, #calib-offset { color: var(--text); font-weight: bold; }
+#calib-offset.applied { color: var(--green); }
+
+/* ── CSV import ── */
+#csv-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+.btn-csv  { border-color: var(--blue); color: var(--blue); }
+#csv-filename { font-size: 10px; color: var(--dim); letter-spacing: 0.5px; }
+
 /* ── Speed slider ── */
 #speed-ctrl {
   display: flex;
@@ -225,3 +270,38 @@ body {
 }
 .mlabel { font-size: 9px; color: var(--dim); letter-spacing: 1px; }
 .mval   { font-size: 14px; color: var(--text); font-weight: bold; }
+
+/* ── Waypoint table ── */
+#wp-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  flex-shrink: 0;
+}
+#wp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+  margin-top: 4px;
+}
+#wp-table th {
+  color: var(--dim);
+  text-align: left;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--border);
+  letter-spacing: 1px;
+  font-size: 9px;
+}
+#wp-table td {
+  padding: 3px 6px;
+  color: var(--dim);
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+#wp-table tr.wp-current td {
+  color: var(--green);
+  font-weight: bold;
+  background: rgba(63, 185, 80, 0.08);
+}
+#wp-table tr:last-child td { border-bottom: none; }

@@ -77,6 +77,16 @@ logger = _setup_logger()
 # WAYPOINT LOADER
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle bearing from point 1 → point 2, in degrees [0, 360)."""
+    import math
+    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+    dlon = lon2 - lon1
+    x = math.sin(dlon) * math.cos(lat2)
+    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+    return (math.degrees(math.atan2(x, y)) + 360) % 360
+
+
 def _load_waypoints(path: Path) -> list[dict]:
     """Load path.csv → list of {lat, lon} dicts."""
     waypoints = []
@@ -87,6 +97,24 @@ def _load_waypoints(path: Path) -> list[dict]:
         for row in csv.DictReader(f, dialect=dialect):
             waypoints.append({"lat": float(row["lat"]), "lon": float(row["lon"])})
     logger.info("Loaded %d waypoints from %s", len(waypoints), path)
+    return waypoints
+
+
+def _parse_csv_content(content: str) -> list[dict]:
+    """Parse CSV text content → list of {lat, lon} dicts."""
+    waypoints = []
+    try:
+        sample = content[:4096]
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters="\t,")
+        except csv.Error:
+            dialect = csv.excel  # fall back to standard comma-separated
+        reader = csv.DictReader(content.splitlines(), dialect=dialect)
+        for row in reader:
+            waypoints.append({"lat": float(row["lat"]), "lon": float(row["lon"])})
+        logger.info("Parsed %d waypoints from uploaded CSV", len(waypoints))
+    except Exception as exc:
+        logger.warning("_parse_csv_content: failed to parse CSV: %s", exc)
     return waypoints
 
 
@@ -102,6 +130,8 @@ class ImuWsClient:
         self._latest: dict = {}
         self._lock = threading.Lock()
         self._last_ts: float = 0.0
+        self._send_queue: asyncio.Queue = asyncio.Queue(maxsize=8)
+        self._ws = None  # live websocket reference for sending
 
     @property
     def latest(self) -> dict:
@@ -113,20 +143,41 @@ class ImuWsClient:
         with self._lock:
             return self._last_ts
 
+    async def set_north_offset(self, offset_deg: float) -> None:
+        """Send north_offset calibration to 01_IMU bridge."""
+        msg = json.dumps({"set_north_offset": round(offset_deg, 4)})
+        try:
+            self._send_queue.put_nowait(msg)
+        except asyncio.QueueFull:
+            pass
+
     async def run(self) -> None:
         while True:
             try:
                 async with websockets.connect(self._url) as ws:
-                    # ── INPUT boundary ─────────────────────────────────────────
-                    async for msg in ws:
-                    # ──────────────────────────────────────────────────────────
-                        try:
-                            data = json.loads(msg)
-                            with self._lock:
-                                self._latest = data
-                                self._last_ts = time.monotonic()
-                        except json.JSONDecodeError as exc:
-                            logger.warning("ImuWsClient: JSON error: %s", exc)
+                    self._ws = ws
+                    async def _sender():
+                        while True:
+                            out = await self._send_queue.get()
+                            try:
+                                await ws.send(out)
+                            except Exception:
+                                pass
+                    sender_task = asyncio.create_task(_sender())
+                    try:
+                        # ── INPUT boundary ─────────────────────────────────────────
+                        async for msg in ws:
+                        # ──────────────────────────────────────────────────────────
+                            try:
+                                data = json.loads(msg)
+                                with self._lock:
+                                    self._latest = data
+                                    self._last_ts = time.monotonic()
+                            except json.JSONDecodeError as exc:
+                                logger.warning("ImuWsClient: JSON error: %s", exc)
+                    finally:
+                        sender_task.cancel()
+                        self._ws = None
             except Exception as exc:
                 logger.warning("ImuWsClient: %s — retrying in %.0fs", exc, self.RECONNECT_DELAY_S)
             await asyncio.sleep(self.RECONNECT_DELAY_S)
@@ -271,6 +322,9 @@ class HttpFileServer:
                 super().__init__(*args, directory=str(static_dir), **kwargs)
             def log_message(self, fmt, *args):
                 pass
+            def end_headers(self):
+                self.send_header("Cache-Control", "no-store")
+                super().end_headers()
 
         socketserver.TCPServer.allow_reuse_address = True
         try:
@@ -306,6 +360,11 @@ class AutoNavLoop:
         self._wp_idx = 0
         self._prev_ts = time.monotonic()
         self._speed_ratio: float = 1.0
+        self._manual_linear: float = 0.0   # set by manual_drive command
+
+        # ── Heading calibration state ─────────────────────────────────────────
+        self._calib_mark: dict | None = None   # {lat, lon} of marked forward point
+        self._calib_offset_applied: float | None = None  # last applied offset
 
     # ── State control (called from WS message handler) ────────────────────────
 
@@ -323,6 +382,71 @@ class AutoNavLoop:
         algo.reset()
         self._state = "idle"
         logger.info("Navigation stopped")
+
+    def cmd_mark_pos(self) -> str:
+        """Record current RTK position as the forward calibration point."""
+        rtk = self._rtk.latest
+        lat, lon = rtk.get("lat"), rtk.get("lon")
+        if lat is None or lon is None:
+            logger.warning("calib mark_pos: no RTK fix")
+            return "no_fix"
+        self._calib_mark = {"lat": float(lat), "lon": float(lon)}
+        logger.info("Calib mark set: lat=%.7f lon=%.7f", lat, lon)
+        return "ok"
+
+    async def cmd_calibrate(self) -> str:
+        """Compute heading from current pos → marked pos and apply to 01_IMU."""
+        if self._calib_mark is None:
+            logger.warning("calib calibrate: no mark set")
+            return "no_mark"
+        rtk = self._rtk.latest
+        imu = self._imu.latest
+        cur_lat, cur_lon = rtk.get("lat"), rtk.get("lon")
+        heading_raw = imu.get("heading", {}).get("raw")
+        if cur_lat is None or cur_lon is None:
+            return "no_fix"
+        if heading_raw is None:
+            return "no_imu"
+        # bearing from current (origin) → marked (forward) point
+        bearing = _bearing(float(cur_lat), float(cur_lon),
+                           self._calib_mark["lat"], self._calib_mark["lon"])
+        north_offset = (bearing - float(heading_raw)) % 360.0
+        await self._imu.set_north_offset(north_offset)
+        self._calib_offset_applied = north_offset
+        logger.info("Calib applied: bearing=%.2f raw=%.2f offset=%.2f",
+                    bearing, heading_raw, north_offset)
+        return "ok"
+
+    def calib_status(self) -> dict:
+        mark = self._calib_mark
+        return {
+            "mark": mark,
+            "offset_applied": self._calib_offset_applied,
+        }
+
+    def cmd_manual(self, linear: float) -> None:
+        if self._state == "idle":
+            self._manual_linear = linear
+
+    def cmd_load_waypoints(self, waypoints: list[dict]) -> None:
+        self.cmd_stop()
+        self._waypoints = waypoints
+        self._wp_idx = 0
+        logger.info("Waypoints replaced: %d waypoints loaded", len(waypoints))
+
+    def _get_wp_window(self, window: int = 7) -> list[dict]:
+        """Return up to `window` waypoints centered around current index."""
+        wps = self._waypoints
+        if not wps:
+            return []
+        half = window // 2
+        start = max(0, self._wp_idx - half)
+        end   = min(len(wps), start + window)
+        start = max(0, end - window)
+        return [
+            {"idx": i, "lat": wps[i]["lat"], "lon": wps[i]["lon"], "current": i == self._wp_idx}
+            for i in range(start, end)
+        ]
 
     def cmd_pause(self) -> None:
         if self._state == "running":
@@ -412,10 +536,13 @@ class AutoNavLoop:
                     logger.info("Arrived at destination")
 
             # ── Send to robot ─────────────────────────────────────────────────
-            await self._robot.send(
-                round(linear * self._speed_ratio, 3),
-                round(angular * self._speed_ratio, 3),
-            )
+            if self._state == "idle":
+                send_linear  = self._manual_linear
+                send_angular = 0.0
+            else:
+                send_linear  = linear * self._speed_ratio
+                send_angular = angular * self._speed_ratio
+            await self._robot.send(round(send_linear, 3), round(send_angular, 3))
 
             # ── Broadcast status ──────────────────────────────────────────────
             status = {
@@ -434,6 +561,8 @@ class AutoNavLoop:
                 "gps_age_s":          round(gps_age, 2),
                 "imu_age_s":          round(imu_age, 2),
                 "speed_ratio":        self._speed_ratio,
+                "calib":              self.calib_status(),
+                "waypoints_window":   self._get_wp_window(),
                 "imu_raw":            imu_raw,
                 "rtk_raw":            rtk_raw,
             }
@@ -452,6 +581,7 @@ class AutoNavLoop:
 class AutoNavBridge:
     def __init__(self) -> None:
         self._nav_loop: AutoNavLoop | None = None
+        self._robot: RobotWsClient | None = None
 
     def run(self) -> None:
         static_dir = Path(__file__).parent / "web_static"
@@ -465,14 +595,18 @@ class AutoNavBridge:
             logger.info("Stopped by user.")
 
     async def _run_async(self) -> None:
-        waypoints = _load_waypoints(PATH_FILE)
+        try:
+            waypoints = _load_waypoints(PATH_FILE)
+        except FileNotFoundError:
+            logger.warning("path.csv not found — starting with no waypoints. Use LOAD CSV in the UI.")
+            waypoints = []
         if not waypoints:
-            logger.error("No waypoints in %s — exiting.", PATH_FILE)
-            return
+            logger.warning("No waypoints loaded from %s — use LOAD CSV in the UI to load a path.", PATH_FILE)
 
         imu_client   = ImuWsClient(IMU_WS_URL)
         rtk_client   = RtkWsClient(RTK_WS_URL)
         robot_client = RobotWsClient(ROBOT_WS_URL)
+        self._robot  = robot_client
         status_queue: asyncio.Queue = asyncio.Queue(maxsize=20)
 
         self._nav_loop = AutoNavLoop(imu_client, rtk_client, robot_client,
@@ -504,6 +638,18 @@ class AutoNavBridge:
         elif t == "pause":     self._nav_loop.cmd_pause()
         elif t == "resume":    self._nav_loop.cmd_resume()
         elif t == "set_speed": self._nav_loop.cmd_set_speed(float(msg.get("ratio", 1.0)))
+        elif t == "load_csv":
+            waypoints = _parse_csv_content(msg.get("content", ""))
+            if waypoints:
+                self._nav_loop.cmd_load_waypoints(waypoints)
+            else:
+                logger.warning("load_csv: no valid waypoints parsed from uploaded content")
+        elif t == "calib_mark":
+            self._nav_loop.cmd_mark_pos()
+        elif t == "calib_apply":
+            await self._nav_loop.cmd_calibrate()
+        elif t == "manual_drive":
+            self._nav_loop.cmd_manual(float(msg.get("linear", 0.0)))
 
 
 if __name__ == "__main__":

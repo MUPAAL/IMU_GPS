@@ -92,7 +92,7 @@ DEAD_ZONE_DEG   = 3.0   # Bearing errors smaller than this are treated as zero.
                         # If oscillation amplitude is ±5°, raise to 5.0 to cover it.
                         # Too large: robot approaches waypoints with a permanent offset.
 
-ANGULAR_SIGN    = 1     # +1: positive heading error → turn left/CCW (default).
+ANGULAR_SIGN    = -1    # +1: positive heading error → turn left/CCW (default).
                         # Set -1 if robot consistently turns the wrong way on startup.
 
 # ── Module-level state ────────────────────────────────────────────────────────

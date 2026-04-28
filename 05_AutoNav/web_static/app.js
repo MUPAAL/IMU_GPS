@@ -106,6 +106,12 @@ function handleNavStatus(msg) {
   setAge(mGpsAge, msg.gps_age_s, 2.0);
   setAge(mImuAge, msg.imu_age_s, 2.0);
 
+  // Waypoint window
+  updateWpTable(msg.waypoints_window);
+
+  // Heading calibration panel
+  updateCalibPanel(msg);
+
   // Input JSON panels (throttled) — data proxied from 01/02 via bridge
   if (now - lastUpdate.imu >= JSON_THROTTLE_MS && msg.imu_raw) {
     lastUpdate.imu = now;
@@ -131,6 +137,104 @@ function handleNavStatus(msg) {
   }
 }
 
+// ── Manual drive ─────────────────────────────────────────
+const MANUAL_SPEED = 0.4;  // m/s straight drive speed
+
+function startManual(linear) { sendCmd('manual_drive', { linear }); }
+function stopManual()         { sendCmd('manual_drive', { linear: 0.0 }); }
+
+const btnFwd = document.getElementById('btn-fwd');
+const btnBwd = document.getElementById('btn-bwd');
+
+btnFwd.addEventListener('pointerdown',  () => startManual( MANUAL_SPEED));
+btnBwd.addEventListener('pointerdown',  () => startManual(-MANUAL_SPEED));
+btnFwd.addEventListener('pointerup',    stopManual);
+btnBwd.addEventListener('pointerup',    stopManual);
+btnFwd.addEventListener('pointerleave', stopManual);
+btnBwd.addEventListener('pointerleave', stopManual);
+
+document.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  if (e.key === 'w' || e.key === 'W') startManual( MANUAL_SPEED);
+  if (e.key === 's' || e.key === 'S') startManual(-MANUAL_SPEED);
+});
+document.addEventListener('keyup', (e) => {
+  if (e.key === 'w' || e.key === 'W' || e.key === 's' || e.key === 'S') stopManual();
+});
+
+// ── Heading calibration ───────────────────────────────────
+const calibMarked  = document.getElementById('calib-marked');
+const calibCurrent = document.getElementById('calib-current');
+const calibBearing = document.getElementById('calib-bearing');
+const calibOffset  = document.getElementById('calib-offset');
+
+function fmtLatLon(lat, lon) {
+  if (lat == null || lon == null) return '—';
+  return `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+}
+
+function bearing(lat1, lon1, lat2, lon2) {
+  const toRad = d => d * Math.PI / 180;
+  const dLon = toRad(lon2 - lon1);
+  const x = Math.sin(dLon) * Math.cos(toRad(lat2));
+  const y = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2))
+          - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+  return ((Math.atan2(x, y) * 180 / Math.PI) + 360) % 360;
+}
+
+let _calibMark = null;
+let _curLat = null, _curLon = null;
+
+function updateCalibPanel(msg) {
+  const calib = msg.calib || {};
+  const rtk   = msg.rtk_raw || {};
+
+  _curLat = rtk.lat ?? null;
+  _curLon = rtk.lon ?? null;
+  _calibMark = calib.mark || null;
+
+  calibCurrent.textContent = fmtLatLon(_curLat, _curLon);
+
+  if (_calibMark) {
+    calibMarked.textContent = fmtLatLon(_calibMark.lat, _calibMark.lon);
+    if (_curLat != null) {
+      const b = bearing(_curLat, _curLon, _calibMark.lat, _calibMark.lon);
+      calibBearing.textContent = b.toFixed(1) + '°';
+    }
+  } else {
+    calibMarked.textContent = '—';
+    calibBearing.textContent = '—';
+  }
+
+  if (calib.offset_applied != null) {
+    calibOffset.textContent = calib.offset_applied.toFixed(2) + '°';
+    calibOffset.className = 'applied';
+  } else {
+    calibOffset.textContent = '—';
+    calibOffset.className = '';
+  }
+}
+
+document.getElementById('btn-mark').addEventListener('click', () => sendCmd('calib_mark'));
+document.getElementById('btn-calibrate').addEventListener('click', () => {
+  if (!_calibMark) { alert('先按 MARK POS 记录前方位置'); return; }
+  sendCmd('calib_apply');
+});
+
+// ── Waypoint table ────────────────────────────────────────
+const wpTbody = document.getElementById('wp-tbody');
+
+function updateWpTable(wps) {
+  if (!wps || !wps.length) {
+    wpTbody.innerHTML = '<tr><td colspan="3" style="color:var(--dim);text-align:center">no waypoints</td></tr>';
+    return;
+  }
+  wpTbody.innerHTML = wps.map(wp => {
+    const cls = wp.current ? ' class="wp-current"' : '';
+    return `<tr${cls}><td>${wp.idx}</td><td>${wp.lat.toFixed(7)}</td><td>${wp.lon.toFixed(7)}</td></tr>`;
+  }).join('');
+}
+
 // ── Control buttons ───────────────────────────────────────────
 function sendCmd(type, extra = {}) {
   if (navWs && navWs.readyState === WebSocket.OPEN) {
@@ -149,6 +253,22 @@ speedSlider.addEventListener('input', (e) => {
   const pct = parseInt(e.target.value);
   document.getElementById('speed-value').textContent = pct + '%';
   sendCmd('set_speed', { ratio: pct / 100 });
+});
+
+// ── CSV import ───────────────────────────────────────────────
+const csvInput    = document.getElementById('csv-input');
+const csvFilename = document.getElementById('csv-filename');
+
+csvInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    sendCmd('load_csv', { content: ev.target.result });
+    csvFilename.textContent = file.name;
+  };
+  reader.readAsText(file);
+  csvInput.value = '';  // allow re-selecting the same file
 });
 
 // ── Boot ─────────────────────────────────────────────────────
