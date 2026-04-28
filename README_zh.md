@@ -142,7 +142,25 @@ IMU_BAUD         = 921600
 IMU_WS_PORT      = 8765
 IMU_NORTH_OFFSET = 0.0              # 航向校准偏移（度）
 
-# 06_Camera（示例）
+# 05_AutoNav — 路径跟踪（完整说明见 05_AutoNav/README_zh.md）
+AUTONAV_LOOKAHEAD_M       = 1.0    # Pure Pursuit 前视距离（m）
+AUTONAV_REACH_TOL_M       = 0.5    # 航点到达判定半径（m）
+AUTONAV_ARRIVE_FRAMES     = 1      # 连续帧数确认到达
+AUTONAV_DECEL_RADIUS_M    = 1.5    # 终点减速开始距离（m）
+AUTONAV_MAX_LINEAR_VEL    = 1.0    # 最大前进速度（m/s）
+AUTONAV_MIN_LINEAR_VEL    = 0.1    # 减速最低速度（m/s）
+AUTONAV_MAX_ANGULAR_VEL   = 1.0    # 最大角速度（rad/s）
+AUTONAV_MANUAL_SPEED      = 0.4    # W/S 手动驾驶速度（m/s）
+AUTONAV_TURN_IN_PLACE_DEG = 10.0   # 超过此误差停止前进原地转向（°）
+AUTONAV_TURN_SLOWDOWN     = True   # 转向时按误差比例降速
+AUTONAV_DEAD_ZONE_DEG     = 3.0    # 不纠偏的误差死区（°）
+AUTONAV_PID_KP            = 0.15   # PID 比例增益
+AUTONAV_PID_KI            = 0.005  # PID 积分增益
+AUTONAV_PID_KD            = 0.15   # PID 微分增益
+AUTONAV_MA_WINDOW         = 5      # GPS 滑动平均窗口（帧）
+AUTONAV_HEADING_ALPHA     = 0.3    # heading 低通滤波系数（0–1）
+
+# 06_Camera
 CAM_FPS              = 25
 CAM_WIDTH            = 640
 CAM_HEIGHT           = 400
@@ -250,11 +268,12 @@ CAM_ENABLE_DISPARITY = False   # 仅调试视差插件时开启
 
 ### 05_AutoNav — 自主导航引擎
 
-- **数据流**：`imu_bridge + rtk_bridge + robot_bridge → AutoNavPipeline → 速度指令 → robot_bridge`
-- **组件**：GeoUtils、MovingAverageFilter、KalmanFilter（4D）、PIDController、P2PController、PurePursuitController、WaypointManager、CoveragePlanner（Boustrophedon 蛇形覆盖）
-- **导航模式**：P2P（方位角控制）/ Pure Pursuit（前视点路径跟踪）
-- **滤波模式**：滑动平均 / 卡尔曼（含 IMU 加速度 + 里程计速度观测）
-- **状态机**：`IDLE → NAVIGATING → FINISHED`
+- **数据流**：`imu_bridge :8766 + rtk_bridge :8776 → AutoNavLoop → algo.compute() → robot_bridge :8889`
+- **算法**：Pure Pursuit（前视航点选择）+ PID（航向误差 → 角速度）
+- **状态机**：`idle → running → paused → arrived`
+- **Dashboard 功能**：实时罗盘、航点表格（7 点滑动窗口）、W/S 手动驾驶、航向校准（MARK POS → CALIBRATE 向 `01_IMU` 发送 `set_north_offset`）
+- **运行时加载 CSV**：通过 LOAD CSV 按钮无需重启即可更换航点文件
+- **所有调参参数在 `config.py`**：PID 增益、前视距离、到达半径、滤波器、速度等——完整参数说明见 `05_AutoNav/README_zh.md`
 
 ### 06_Camera — OAK-D 摄像头桥接器
 

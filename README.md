@@ -142,6 +142,24 @@ IMU_BAUD         = 921600
 IMU_WS_PORT      = 8765
 IMU_NORTH_OFFSET = 0.0              # heading calibration (degrees)
 
+# 05_AutoNav — path tracking (see 05_AutoNav/README.md for full reference)
+AUTONAV_LOOKAHEAD_M       = 1.0    # Pure Pursuit lookahead distance (m)
+AUTONAV_REACH_TOL_M       = 0.5    # waypoint arrival radius (m)
+AUTONAV_ARRIVE_FRAMES     = 1      # consecutive frames to confirm arrival
+AUTONAV_DECEL_RADIUS_M    = 1.5    # deceleration distance before final waypoint (m)
+AUTONAV_MAX_LINEAR_VEL    = 1.0    # max forward speed (m/s)
+AUTONAV_MIN_LINEAR_VEL    = 0.1    # min speed during deceleration (m/s)
+AUTONAV_MAX_ANGULAR_VEL   = 1.0    # max angular velocity (rad/s)
+AUTONAV_MANUAL_SPEED      = 0.4    # W/S manual drive speed (m/s)
+AUTONAV_TURN_IN_PLACE_DEG = 10.0   # stop forward motion above this heading error (°)
+AUTONAV_TURN_SLOWDOWN     = True   # scale speed down with heading error
+AUTONAV_DEAD_ZONE_DEG     = 3.0    # ignore errors smaller than this (°)
+AUTONAV_PID_KP            = 0.15   # PID proportional gain
+AUTONAV_PID_KI            = 0.005  # PID integral gain
+AUTONAV_PID_KD            = 0.15   # PID derivative gain
+AUTONAV_MA_WINDOW         = 5      # GPS sliding-average window (frames)
+AUTONAV_HEADING_ALPHA     = 0.3    # heading low-pass filter coefficient (0–1)
+
 # 06_Camera
 CAM_FPS              = 25
 CAM_WIDTH            = 640
@@ -250,11 +268,12 @@ CAM_ENABLE_DISPARITY = False   # turn on only when debugging disparity plugins
 
 ### 05_AutoNav — Autonomous Navigation Engine
 
-- **Data flow**: `imu_bridge + rtk_bridge + robot_bridge → AutoNavPipeline → velocity commands → robot_bridge`
-- **Components**: GeoUtils, MovingAverageFilter, KalmanFilter (4D), PIDController, P2PController, PurePursuitController, WaypointManager, CoveragePlanner (Boustrophedon)
-- **Nav modes**: P2P (bearing control) / Pure Pursuit (lookahead path tracking)
-- **Filter modes**: Moving Average / Kalman (IMU acceleration + odometry velocity)
-- **State machine**: `IDLE → NAVIGATING → FINISHED`
+- **Data flow**: `imu_bridge :8766 + rtk_bridge :8776 → AutoNavLoop → algo.compute() → robot_bridge :8889`
+- **Algorithm**: Pure Pursuit (lookahead waypoint selection) + PID (heading error → angular velocity)
+- **State machine**: `idle → running → paused → arrived`
+- **Dashboard features**: live compass, waypoint table (7-point window), manual W/S drive, heading calibration (MARK POS → CALIBRATE sends `set_north_offset` to `01_IMU`)
+- **Runtime CSV load**: upload a new `path.csv` via the LOAD CSV button without restarting
+- **All tuning params in `config.py`**: PID gains, Pure Pursuit lookahead, arrival radius, filters, speeds — see `05_AutoNav/README.md` for full parameter reference
 
 ### 06_Camera — OAK-D Camera Bridge
 

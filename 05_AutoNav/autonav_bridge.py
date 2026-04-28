@@ -54,8 +54,9 @@ WS_PORT            = HTTP_PORT + 1                        # 8806
 IMU_WS_URL         = _cfg.AUTONAV_IMU_WS  if _cfg else "ws://localhost:8766"
 RTK_WS_URL         = _cfg.AUTONAV_RTK_WS  if _cfg else "ws://localhost:8776"
 ROBOT_WS_URL       = "ws://localhost:8889"
-GPS_TIMEOUT_S      = _cfg.AUTONAV_GPS_TIMEOUT_S if _cfg else 5.0
-CONTROL_HZ         = _cfg.AUTONAV_CONTROL_HZ    if _cfg else 5.0
+GPS_TIMEOUT_S      = _cfg.AUTONAV_GPS_TIMEOUT_S  if _cfg else 5.0
+CONTROL_HZ         = _cfg.AUTONAV_CONTROL_HZ     if _cfg else 5.0
+MANUAL_SPEED       = _cfg.AUTONAV_MANUAL_SPEED   if _cfg else 0.4
 HEARTBEAT_INTERVAL = 1.0
 
 PATH_FILE = Path(__file__).parent / "path.csv"
@@ -561,6 +562,7 @@ class AutoNavLoop:
                 "gps_age_s":          round(gps_age, 2),
                 "imu_age_s":          round(imu_age, 2),
                 "speed_ratio":        self._speed_ratio,
+                "manual_speed":       MANUAL_SPEED,
                 "calib":              self.calib_status(),
                 "waypoints_window":   self._get_wp_window(),
                 "imu_raw":            imu_raw,

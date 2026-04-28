@@ -106,6 +106,9 @@ function handleNavStatus(msg) {
   setAge(mGpsAge, msg.gps_age_s, 2.0);
   setAge(mImuAge, msg.imu_age_s, 2.0);
 
+  // Sync config values from server
+  if (msg.manual_speed != null) MANUAL_SPEED = msg.manual_speed;
+
   // Waypoint window
   updateWpTable(msg.waypoints_window);
 
@@ -138,7 +141,7 @@ function handleNavStatus(msg) {
 }
 
 // ── Manual drive ─────────────────────────────────────────
-const MANUAL_SPEED = 0.4;  // m/s straight drive speed
+let MANUAL_SPEED = 0.4;  // updated from server via autonav_status.manual_speed
 
 function startManual(linear) { sendCmd('manual_drive', { linear }); }
 function stopManual()         { sendCmd('manual_drive', { linear: 0.0 }); }

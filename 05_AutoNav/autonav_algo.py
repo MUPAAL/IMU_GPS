@@ -25,75 +25,49 @@ Oscillation tuning guide (if robot swings left-right near waypoints):
 """
 
 import math
+import sys
+from pathlib import Path
 from collections import deque
 
-# ── Tuning parameters ─────────────────────────────────────────────────────────
+# ── Load config ───────────────────────────────────────────────────────────────
+sys.path.insert(0, str(Path(__file__).parent.parent))
+try:
+    import config as _cfg
+except ImportError:
+    _cfg = None
+
+def _c(attr, default):
+    return getattr(_cfg, attr, default) if _cfg else default
 
 ALGO_DEBUG      = False  # set True to print filter + PID values every tick
 
 # ── Geometry / waypoint ───────────────────────────────────────────────────────
-
-LOOKAHEAD_M     = 2.0   # Pure Pursuit lookahead distance (m).
-                        # Increase if path is smooth and robot overshoots turns.
-                        # Decrease if robot cuts corners on tight paths.
-
-REACH_TOL_M     = 1.5   # Waypoint arrival radius (m).
-                        # Increase if robot never "reaches" a waypoint.
-                        # Decrease for tighter path following.
-
-ARRIVE_FRAMES   = 5     # Consecutive frames inside REACH_TOL_M to confirm arrival.
-                        # At 5 Hz: 5 frames = 1 s. Prevents false triggers from GPS jumps.
-                        # Lower if arrival confirmation is too slow.
-
-DECEL_RADIUS_M  = 3.0   # Distance from final waypoint where robot starts slowing (m).
-                        # Increase for a longer, gentler brake.
+LOOKAHEAD_M     = _c("AUTONAV_LOOKAHEAD_M",     1.0)
+REACH_TOL_M     = _c("AUTONAV_REACH_TOL_M",     0.5)
+ARRIVE_FRAMES   = _c("AUTONAV_ARRIVE_FRAMES",   1)
+DECEL_RADIUS_M  = _c("AUTONAV_DECEL_RADIUS_M",  1.5)
 
 # ── Speed ─────────────────────────────────────────────────────────────────────
-
-MAX_LINEAR      = 1.0   # Max forward speed (m/s). Hard ceiling sent to robot.
-MIN_LINEAR      = 0.1   # Min forward speed during final deceleration (m/s).
-                        # Keeps robot creeping forward instead of stopping mid-path.
-MAX_ANGULAR     = 1.0   # Max angular velocity (rad/s). Clamp on PID output.
+MAX_LINEAR      = _c("AUTONAV_MAX_LINEAR_VEL",  1.0)
+MIN_LINEAR      = _c("AUTONAV_MIN_LINEAR_VEL",  0.1)
+MAX_ANGULAR     = _c("AUTONAV_MAX_ANGULAR_VEL", 1.0)
 
 # ── PID ───────────────────────────────────────────────────────────────────────
-# KP: proportional gain. Saturation point = MAX_ANGULAR / KP.
-#     KP=0.8 → saturates at 1.25° error (too aggressive, causes oscillation).
-#     KP=0.2 → saturates at 5° error (proportional response for small corrections).
-#     Start low (0.1~0.3) and raise until response feels crisp without oscillation.
-KP = 0.8
-
-# KI: integral gain. Corrects persistent steady-state heading offset.
-#     Keep small — large KI causes slow wind-up oscillation.
-#     If robot consistently arrives slightly left/right of target, nudge KI up.
-KI = 0.01
-
-# KD: derivative gain. Damps overshoot and oscillation.
-#     Increase (0.05→0.15) if robot oscillates despite low KP.
-#     Too high causes jittery angular commands from sensor noise.
-KD = 0.05
+KP              = _c("AUTONAV_PID_KP",          0.15)
+KI              = _c("AUTONAV_PID_KI",          0.005)
+KD              = _c("AUTONAV_PID_KD",          0.15)
 
 # ── Filters ───────────────────────────────────────────────────────────────────
-
-MA_WINDOW       = 10    # GPS lat/lon sliding-average window (frames).
-                        # 10 frames @ 5 Hz = 2 s of smoothing.
-                        # Reduces bearing jumps from RTK multipath noise.
-                        # Decrease if robot feels sluggish to path changes.
-
-HEADING_ALPHA   = 0.2   # Heading exponential low-pass coefficient (0 < α ≤ 1).
-                        # α=1.0: no filtering (raw IMU).
-                        # α=0.2: ~5-frame time constant, absorbs inertial swing.
-                        # α=0.1: ~10-frame time constant, very slow to react.
-                        # If robot oscillates ±5° due to inertia, try 0.1.
+MA_WINDOW       = _c("AUTONAV_MA_WINDOW",       5)
+HEADING_ALPHA   = _c("AUTONAV_HEADING_ALPHA",   0.3)
 
 # ── Steering ──────────────────────────────────────────────────────────────────
+DEAD_ZONE_DEG   = _c("AUTONAV_DEAD_ZONE_DEG",   3.0)
+TURN_SLOWDOWN   = _c("AUTONAV_TURN_SLOWDOWN",   True)
+TURN_IN_PLACE_DEG = _c("AUTONAV_TURN_IN_PLACE_DEG", 10.0)
 
-DEAD_ZONE_DEG   = 3.0   # Bearing errors smaller than this are treated as zero.
-                        # Prevents constant micro-corrections near the target bearing.
-                        # If oscillation amplitude is ±5°, raise to 5.0 to cover it.
-                        # Too large: robot approaches waypoints with a permanent offset.
-
-ANGULAR_SIGN    = -1    # +1: positive heading error → turn left/CCW (default).
-                        # Set -1 if robot consistently turns the wrong way on startup.
+ANGULAR_SIGN    = -1    # +1: positive heading error → turn left/CCW.
+                        # Set -1 if robot turns the wrong way.
 
 # ── Module-level state ────────────────────────────────────────────────────────
 
@@ -188,20 +162,26 @@ def compute(
         print(f"[FILTER] raw_lat={lat:.7f} flat={flat:.7f} "
               f"raw_hdg={heading_deg:.1f} fhdg={_heading_filt:.1f}")
 
-    # ── 3. Arrival detection + debounce ───────────────────────────────────────
-    # Uses filtered position for distance to avoid false arrivals from GPS noise.
-    # ARRIVE_FRAMES consecutive readings inside REACH_TOL_M required to advance;
-    # a single-frame GPS jump cannot accidentally skip a waypoint.
+    # ── 3. Arrival detection ──────────────────────────────────────────────────
+    # Uses RAW GPS (not filtered) so the check responds immediately even when
+    # the MA filter is still catching up. Single-frame confirmation: as soon as
+    # raw distance < REACH_TOL_M, advance wp_idx and flush the position filter
+    # so the bearing to the next waypoint is computed fresh next tick.
     wp = waypoints[wp_idx]
-    d_to_wp = _haversine(flat, flon, wp["lat"], wp["lon"])
+    d_to_wp_raw = _haversine(lat, lon, wp["lat"], wp["lon"])
 
-    if d_to_wp < REACH_TOL_M:
+    if d_to_wp_raw < REACH_TOL_M:
         _arrive_counter += 1
         if _arrive_counter >= ARRIVE_FRAMES:
             wp_idx += 1
             _arrive_counter = 0
+            _integral = 0.0
+            _lat_buf.clear()   # flush so next bearing uses fresh GPS
+            _lon_buf.clear()
     else:
         _arrive_counter = 0
+
+    d_to_wp = _haversine(flat, flon, wp["lat"], wp["lon"])  # filtered, for display
 
     # ── 4. Check mission complete ─────────────────────────────────────────────
     if wp_idx >= len(waypoints):
@@ -251,16 +231,19 @@ def compute(
     angular = max(-MAX_ANGULAR, min(MAX_ANGULAR, angular))
     angular *= ANGULAR_SIGN
 
-    # ── 9. Linear speed with end-of-path deceleration ────────────────────────
-    # Speed is constant (MAX_LINEAR) until within DECEL_RADIUS_M of the final
-    # waypoint, then ramps linearly down to MIN_LINEAR.
-    # If robot oscillates, consider also scaling linear by (1 - |error|/90) so
-    # large heading errors automatically reduce forward speed.
+    # ── 9. Linear speed with end-of-path deceleration + turn slowdown ────────
     if dist_to_final < DECEL_RADIUS_M:
         linear = MAX_LINEAR * (dist_to_final / DECEL_RADIUS_M)
         linear = max(MIN_LINEAR, linear)
     else:
         linear = MAX_LINEAR
+
+    if TURN_IN_PLACE_DEG > 0 and abs(error) > TURN_IN_PLACE_DEG:
+        linear = 0.0
+    elif TURN_SLOWDOWN and error != 0.0:
+        # Scale speed down linearly with heading error: full speed at 0°, MIN_LINEAR at 60°+
+        turn_scale = max(0.0, 1.0 - abs(error) / 60.0)
+        linear = max(MIN_LINEAR, linear * turn_scale)
 
     if ALGO_DEBUG:
         print(f"[ALGO] error={error:.1f}° target={target_bearing:.1f}° "
