@@ -124,6 +124,37 @@ body {
 .state-paused  { color: var(--yellow); border-color: var(--yellow); }
 .state-arrived { color: var(--blue);   border-color: var(--blue);   }
 
+/* ── Waypoint arrival banner ── */
+#wp-arrive-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(240,136,62,0.15);
+  border: 1px solid var(--orange);
+  border-radius: 6px;
+  padding: 8px 14px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+  animation: pulse-banner 1s ease-in-out infinite alternate;
+}
+#wp-arrive-msg {
+  color: var(--orange);
+  font-weight: bold;
+  flex: 1;
+}
+.btn-continue {
+  background: var(--orange);
+  color: var(--bg);
+  font-weight: bold;
+  border-color: var(--orange);
+  white-space: nowrap;
+}
+.btn-continue:hover { opacity: 0.85; }
+@keyframes pulse-banner {
+  from { box-shadow: 0 0 4px rgba(240,136,62,0.3); }
+  to   { box-shadow: 0 0 12px rgba(240,136,62,0.7); }
+}
+
 /* ── Control buttons ── */
 #ctrl-btns {
   display: flex;

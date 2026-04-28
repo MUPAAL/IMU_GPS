@@ -109,6 +109,16 @@ function handleNavStatus(msg) {
   // Sync config values from server
   if (msg.manual_speed != null) MANUAL_SPEED = msg.manual_speed;
 
+  // Waypoint arrival banner
+  const banner = document.getElementById('wp-arrive-banner');
+  if (msg.waiting_at_wp) {
+    document.getElementById('wp-arrive-msg').textContent =
+      `Arrived at WP #${msg.waiting_wp_idx} — click CONTINUE to proceed`;
+    banner.style.display = 'flex';
+  } else {
+    banner.style.display = 'none';
+  }
+
   // Waypoint window
   updateWpTable(msg.waypoints_window);
 
@@ -256,6 +266,11 @@ speedSlider.addEventListener('input', (e) => {
   const pct = parseInt(e.target.value);
   document.getElementById('speed-value').textContent = pct + '%';
   sendCmd('set_speed', { ratio: pct / 100 });
+});
+
+// ── Waypoint CONTINUE button ─────────────────────────────────
+document.getElementById('btn-continue').addEventListener('click', () => {
+  sendCmd('confirm_wp', {});
 });
 
 // ── CSV import ───────────────────────────────────────────────

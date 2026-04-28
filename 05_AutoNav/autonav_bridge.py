@@ -228,34 +228,41 @@ class RobotWsClient:
 
     def __init__(self, url: str) -> None:
         self._url = url
-        self._queue: asyncio.Queue = asyncio.Queue(maxsize=5)
+        self._ws = None           # live WS reference; None when disconnected
         self._last_sent_ts: float = 0.0
 
     async def send(self, linear: float, angular: float) -> None:
+        if self._ws is None:
+            logger.warning("RobotWsClient.send: ws not connected, dropping (%.2f, %.2f)", linear, angular)
+            return
         msg = json.dumps({"type": "joystick", "linear": linear, "angular": angular})
         try:
-            self._queue.put_nowait(msg)
-        except asyncio.QueueFull:
-            try:
-                self._queue.get_nowait()
-                self._queue.put_nowait(msg)
-            except asyncio.QueueEmpty:
-                pass
+            # ── OUTPUT boundary ────────────────────────────────────────────────
+            await self._ws.send(msg)
+            # ──────────────────────────────────────────────────────────────────
+            self._last_sent_ts = time.monotonic()
+            if linear == 0.0 and angular == 0.0:
+                logger.info("RobotWsClient: sent STOP (0,0)")
+        except Exception as e:
+            logger.warning("RobotWsClient.send: error %s", e)
+            self._ws = None       # mark disconnected; run() will reconnect
+
+    def flush_stop(self) -> None:
+        """Schedule an immediate stop — creates a fire-and-forget task."""
+        asyncio.create_task(self.send(0.0, 0.0))
 
     async def run(self) -> None:
         asyncio.create_task(self._heartbeat_loop())
         while True:
             try:
                 async with websockets.connect(self._url) as ws:
-                    while True:
-                        msg = await self._queue.get()
-                        # ── OUTPUT boundary ────────────────────────────────────
-                        await ws.send(msg)
-                        # ──────────────────────────────────────────────────────
-                        self._last_sent_ts = time.monotonic()
+                    self._ws = ws
+                    await ws.wait_closed()
             except Exception as exc:
                 logger.warning("RobotWsClient: %s — retrying in %.0fs", exc, self.RECONNECT_DELAY_S)
-                await asyncio.sleep(self.RECONNECT_DELAY_S)
+            finally:
+                self._ws = None
+            await asyncio.sleep(self.RECONNECT_DELAY_S)
 
     async def _heartbeat_loop(self) -> None:
         while True:
@@ -382,6 +389,7 @@ class AutoNavLoop:
     def cmd_stop(self) -> None:
         algo.reset()
         self._state = "idle"
+        self._robot.flush_stop()
         logger.info("Navigation stopped")
 
     def cmd_mark_pos(self) -> str:
@@ -453,6 +461,7 @@ class AutoNavLoop:
         if self._state == "running":
             self._state = "paused"
             self._paused_by_timeout = False
+            self._robot.flush_stop()
 
     def cmd_resume(self) -> None:
         if self._state == "paused":
@@ -540,9 +549,12 @@ class AutoNavLoop:
             if self._state == "idle":
                 send_linear  = self._manual_linear
                 send_angular = 0.0
-            else:
+            elif self._state == "running":
                 send_linear  = linear * self._speed_ratio
                 send_angular = angular * self._speed_ratio
+            else:  # paused / arrived — explicit stop
+                send_linear  = 0.0
+                send_angular = 0.0
             await self._robot.send(round(send_linear, 3), round(send_angular, 3))
 
             # ── Broadcast status ──────────────────────────────────────────────
@@ -565,6 +577,8 @@ class AutoNavLoop:
                 "manual_speed":       MANUAL_SPEED,
                 "calib":              self.calib_status(),
                 "waypoints_window":   self._get_wp_window(),
+                "waiting_at_wp":      debug.get("waiting_at_wp", False),
+                "waiting_wp_idx":     debug.get("waiting_wp_idx"),
                 "imu_raw":            imu_raw,
                 "rtk_raw":            rtk_raw,
             }
@@ -652,6 +666,8 @@ class AutoNavBridge:
             await self._nav_loop.cmd_calibrate()
         elif t == "manual_drive":
             self._nav_loop.cmd_manual(float(msg.get("linear", 0.0)))
+        elif t == "confirm_wp":
+            algo.confirm_wp()
 
 
 if __name__ == "__main__":
