@@ -441,7 +441,8 @@ class RobotWsClient:
         async def _session(ws) -> None:
             self._ws = ws
             try:
-                await ws.wait_closed()
+                async for _ in ws:  # drain incoming messages (odom/state) to prevent TCP buffer fill
+                    pass
             finally:
                 self._ws = None
 

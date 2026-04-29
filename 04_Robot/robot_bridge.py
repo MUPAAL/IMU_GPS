@@ -332,12 +332,13 @@ class RobotWebSocketServer:
         while True:
             try:
                 with self._ser_lock:
-                    if self._ser is None or not self._ser.is_open:
-                        buf = b""
-                        time.sleep(0.1)
-                        continue
-                    n     = self._ser.in_waiting
-                    chunk = self._ser.read(n) if n > 0 else b""
+                    ser = self._ser
+                if ser is None or not ser.is_open:
+                    buf = b""
+                    time.sleep(0.1)
+                    continue
+                n     = ser.in_waiting
+                chunk = ser.read(n) if n > 0 else b""
             except serial.SerialException as exc:
                 logger.error("SerialReader: error: %s", exc)
                 buf = b""
@@ -402,8 +403,7 @@ class RobotWebSocketServer:
     async def _odom_broadcast_loop(self) -> None:
         while True:
             await asyncio.sleep(0.05)  # 20 Hz
-            with _odom_lock:
-                odom = dict(_last_odom)
+            odom = dict(_last_odom)  # GIL protects dict copy; no lock needed in coroutine
             if odom:
                 await self._broadcast({"type": "odom", **odom})
 
@@ -413,9 +413,10 @@ class RobotWebSocketServer:
             elapsed = time.time() - self._last_heartbeat
             if elapsed > self._watchdog_timeout:
                 logger.warning("Watchdog: no heartbeat for %.1fs — emergency stop", elapsed)
-                self._send_velocity(0.0, 0.0)
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._send_velocity, 0.0, 0.0)
                 if self._auto_active:
-                    self._send_raw(b"\r")
+                    await loop.run_in_executor(None, self._send_raw, b"\r")
                 self._last_heartbeat = time.time()
 
     async def _ws_handler(self, websocket) -> None:
@@ -440,12 +441,14 @@ class RobotWebSocketServer:
                     try:
                         lin = max(-self._max_linear,  min(self._max_linear,  float(msg.get("linear",  0.0))))
                         ang = max(-self._max_angular, min(self._max_angular, float(msg.get("angular", 0.0))))
-                        self._send_velocity(lin, ang)
+                        loop = asyncio.get_event_loop()
+                        await loop.run_in_executor(None, self._send_velocity, lin, ang)
                     except (TypeError, ValueError):
                         pass
                 elif msg_type == "toggle_state":
                     self._last_heartbeat = time.time()
-                    self._send_raw(b"\r")
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, self._send_raw, b"\r")
                 elif msg_type == "set_recording":
                     enabled = msg.get("enabled")
                     logger.warning("set_recording received: enabled=%s", enabled)
@@ -471,7 +474,7 @@ class RobotWebSocketServer:
         imu_client = ImuWsClient(self._imu_ws_url, self._broadcast)
         rtk_client = RtkWsClient(self._rtk_ws_url, self._broadcast)
 
-        async with websockets.serve(self._ws_handler, "0.0.0.0", self._port, ping_interval=20, ping_timeout=10):
+        async with websockets.serve(self._ws_handler, "0.0.0.0", self._port, ping_interval=None):
             await asyncio.gather(
                 self._odom_broadcast_loop(),
                 self._watchdog_loop(),

@@ -46,10 +46,10 @@ NAV_REACH_TOLERANCE_M = 0.5                       # Waypoint arrival tolerance (
 ROBOT_WS_PORT          = 8888                      # HTTP port; WebSocket = ROBOT_WS_PORT + 1
 ROBOT_SERIAL_PORT      = "/dev/cu.usbmodem1301"   # Feather M4 serial port (Linux: /dev/ttyACM0)
 ROBOT_SERIAL_BAUD      = 115200                    # Serial baud rate
-ROBOT_SERIAL_TIMEOUT   = 1.0                       # Serial read timeout (seconds)
+ROBOT_SERIAL_TIMEOUT   = 0.05                      # Serial read timeout (seconds)
 ROBOT_MAX_LINEAR       = 1.0                       # Max linear velocity (m/s)
 ROBOT_MAX_ANGULAR      = 1.0                       # Max angular velocity (rad/s)
-ROBOT_WATCHDOG_TIMEOUT = 1.0                       # Watchdog timeout (seconds); triggers e-stop
+ROBOT_WATCHDOG_TIMEOUT = 3.0                       # Watchdog timeout (seconds); triggers e-stop
 ROBOT_RECORD_INTERVAL  = 1.0                       # Recording sample interval (seconds); min 0.2
 
 
@@ -63,7 +63,7 @@ AUTONAV_RTK_WS          = "ws://localhost:8776"     # rtk_bridge WebSocket URL
 AUTONAV_ROBOT_WS        = "ws://localhost:8889"     # robot_bridge WebSocket URL
 AUTONAV_GPS_TIMEOUT_S   = 5.0                       # GPS data timeout (seconds)
 AUTONAV_CONTROL_HZ      = 5.0                       # Navigation control loop frequency (Hz)
-AUTONAV_ROBOT_SEND_TIMEOUT_S = 0.2                  # Max time allowed for one robot WS send (seconds)
+AUTONAV_ROBOT_SEND_TIMEOUT_S = 2.0                  # Max time allowed for one robot WS send (seconds)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
