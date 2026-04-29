@@ -173,3 +173,35 @@ python listen_autonav.py
 - **GPS fix 过滤**：`fix_quality == 0`（无信号/默认坐标）不计入 GPS age，防止虚假"有信号"读数。
 - **Watchdog 心跳**：每秒向 `robot_bridge` 发送零速指令，防止机器人因通信中断失控。
 - **手动驾驶联锁**：W/S 按钮仅在 `idle` 状态有效，不会覆盖正在运行的导航任务。
+- **M4 指令 Watchdog**：`CIRCUITPY/code.py` 中若 500 ms 内未收到 `V` 指令，自动清零电机速度。确保 Pi–M4 串口或 robot_bridge WS 连接断开时机器人立即停止。
+
+## WS 客户端设计要点 — 必须消费所有传入消息
+
+`RobotWsClient` 连接 `robot_bridge` 的目的是**发送**摇杆指令，但 `robot_bridge` 同时也会以 **20 Hz** 向所有已连接的 WS 客户端**广播** odom 数据。
+
+如果客户端从不读取这些消息，会触发下面这条断线链：
+
+```
+robot_bridge 以 20 Hz 发送 odom
+  → autonav 从不读取
+  → websockets 内部队列满
+  → OS TCP 接收缓冲区满（~87 KB ÷ 2 KB/s ≈ 43 s）
+  → TCP Window = 0（接收方告知发送方"停发"）
+  → robot_bridge 的 await ws.send(odom) 挂起等待
+  → robot_bridge asyncio 事件循环被占住
+  → autonav 发送的 joystick 命令等不到 ACK，超时
+  → 连接断开
+```
+
+**规则**：不需要接收数据的 WS 客户端，也必须持续消费（并丢弃）传入消息：
+
+```python
+# 正确 — 消费并丢弃
+async for _ in ws:
+    pass
+
+# 错误 — 从不读取，缓冲区积压，触发 TCP 背压
+await ws.wait_closed()
+```
+
+适用范围：本项目中所有"只写"WS 客户端（`ImuWsClient`、`RtkWsClient`、`RobotWsClient`）。TCP 背压会把接收方向的堵塞传导成发送方向的故障，双向连接上任意一侧堆积都可能导致整条连接失效。

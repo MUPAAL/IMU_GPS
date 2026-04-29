@@ -174,3 +174,35 @@ python listen_autonav.py
 - **Robot send watchdog**: each velocity command send is bounded by `AUTONAV_ROBOT_SEND_TIMEOUT_S`; if the WebSocket stalls, the control loop drops the command and reconnects instead of hanging.
 - **Watchdog heartbeat**: zero-velocity command sent to `robot_bridge` every second to prevent runaway on connection loss.
 - **Manual drive interlock**: W/S buttons only work in `idle` state — cannot override an active navigation session.
+- **M4 command watchdog**: `CIRCUITPY/code.py` zeroes motor speed if no `V` command is received within 500 ms. This ensures the robot stops even if the Pi–M4 serial link or the robot_bridge WS connection drops mid-navigation.
+
+## WS Client Design Note — Always Drain Incoming Messages
+
+`RobotWsClient` connects to `robot_bridge` to **send** joystick commands. However, `robot_bridge` also **broadcasts** odom data (20 Hz) back to every connected WS client.
+
+If the client never reads these incoming messages, the following chain causes periodic disconnection (~43 s):
+
+```
+robot_bridge sends odom 20 Hz
+  → autonav never reads it
+  → websockets internal queue fills
+  → OS TCP receive buffer fills (~87 KB / 2 KB·s⁻¹ ≈ 43 s)
+  → TCP Window = 0  (receiver tells sender "stop")
+  → robot_bridge's await ws.send(odom) blocks
+  → robot_bridge event loop stalls
+  → autonav's await ws.send(joystick) waits for ACK > timeout
+  → connection dropped
+```
+
+**Rule**: any WS client that does not need incoming data must still drain the socket:
+
+```python
+# correct — drains and discards
+async for _ in ws:
+    pass
+
+# wrong — never reads; buffer fills and causes TCP backpressure
+await ws.wait_closed()
+```
+
+This applies to all "write-only" WS clients in this codebase (`ImuWsClient`, `RtkWsClient`, `RobotWsClient`). TCP backpressure on a bidirectional connection propagates stalls from the receive direction into the send direction.
