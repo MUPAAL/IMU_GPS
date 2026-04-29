@@ -38,6 +38,8 @@ class HelloMainLoopApp:
         self.inc = 0.1
 
         self._line_buf = []  # line buffer for multi-byte V commands
+        self._last_cmd_ms = supervisor.ticks_ms()  # watchdog: zero speed if no command for CMD_TIMEOUT_MS
+        self.CMD_TIMEOUT_MS = 500
 
         self._register_message_handlers()
         console.write(b"S:READY\n")  # notify host of initial firmware state on startup
@@ -92,6 +94,8 @@ class HelloMainLoopApp:
                 self.cmd_ang_rate = max(-1.0, min(1.0, float(parts[1])))
         except (ValueError, IndexError):
             pass  # ignore malformed command
+        else:
+            self._last_cmd_ms = supervisor.ticks_ms()
 
     def serial_read(self):
         while console.in_waiting > 0:
@@ -110,6 +114,11 @@ class HelloMainLoopApp:
 
     def iter(self):
         self.serial_read()
+
+        # Watchdog: zero speed if no V command received within timeout
+        if (supervisor.ticks_ms() - self._last_cmd_ms) > self.CMD_TIMEOUT_MS:
+            self.cmd_speed = 0.0
+            self.cmd_ang_rate = 0.0
 
         if self.cmd_repeater.check():
             self.can.send(

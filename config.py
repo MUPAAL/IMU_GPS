@@ -63,6 +63,7 @@ AUTONAV_RTK_WS          = "ws://localhost:8776"     # rtk_bridge WebSocket URL
 AUTONAV_ROBOT_WS        = "ws://localhost:8889"     # robot_bridge WebSocket URL
 AUTONAV_GPS_TIMEOUT_S   = 5.0                       # GPS data timeout (seconds)
 AUTONAV_CONTROL_HZ      = 5.0                       # Navigation control loop frequency (Hz)
+AUTONAV_ROBOT_SEND_TIMEOUT_S = 0.2                  # Max time allowed for one robot WS send (seconds)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -170,6 +170,7 @@ python listen_autonav.py
 ## Safety
 
 - **Sensor timeout**: navigation auto-pauses if GPS or IMU data age exceeds `AUTONAV_GPS_TIMEOUT_S` (default 5 s); auto-resumes when sensors recover.
-- **GPS fix filter**: frames with `fix_quality == 0` do not update GPS age, preventing false "data is fresh" readings.
+- **GPS fix filter**: frames with `fix_quality == 0` now pause navigation immediately instead of continuing to consume stale RTK coordinates.
+- **Robot send watchdog**: each velocity command send is bounded by `AUTONAV_ROBOT_SEND_TIMEOUT_S`; if the WebSocket stalls, the control loop drops the command and reconnects instead of hanging.
 - **Watchdog heartbeat**: zero-velocity command sent to `robot_bridge` every second to prevent runaway on connection loss.
 - **Manual drive interlock**: W/S buttons only work in `idle` state — cannot override an active navigation session.

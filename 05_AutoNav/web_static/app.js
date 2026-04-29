@@ -271,6 +271,9 @@ speedSlider.addEventListener('input', (e) => {
 // ── Waypoint CONTINUE button ─────────────────────────────────
 document.getElementById('btn-continue').addEventListener('click', () => {
   sendCmd('confirm_wp', {});
+  const btn = document.getElementById('btn-continue');
+  btn.textContent = 'SENT ✓';
+  setTimeout(() => { btn.textContent = 'CONTINUE →'; }, 800);
 });
 
 // ── CSV import ───────────────────────────────────────────────
