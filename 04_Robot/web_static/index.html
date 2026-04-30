@@ -22,6 +22,7 @@
   .json-block { background: rgba(0,0,0,0.75); border-radius: 4px; padding: 6px 8px; }
   .json-type { color: #4f4; font-family: monospace; font-size: 0.7rem; margin-bottom: 2px; }
   .json-block pre { color: #eee; font-family: monospace; font-size: 0.7rem; line-height: 1.4; margin: 0; white-space: pre-wrap; }
+  #json-panel.collapsed { display: none; }
 </style>
 </head>
 <body>
@@ -51,6 +52,7 @@
     </button>
     <span id="rec-filename">—</span>
     <button id="rec-btn" class="rec-idle">● REC</button>
+    <button id="panel-toggle-btn" title="Toggle data panel">📊</button>
   </div>
 
   <!-- ── Raw JSON panels ── -->

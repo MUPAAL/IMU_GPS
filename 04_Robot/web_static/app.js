@@ -12,6 +12,7 @@ const DEADZONE = 0.15;
 // MAX_LINEAR_VEL / MAX_ANGULAR_VEL injected by server as data-* attributes
 const MAX_LINEAR  = parseFloat(document.documentElement.dataset.maxLinear  || "1.0");
 const MAX_ANGULAR = parseFloat(document.documentElement.dataset.maxAngular || "1.0");
+const fmt2 = v => (v >= 0 ? '+' : '') + v.toFixed(2);
 
 // ── Speed ratio ──────────────────────────────────────────────
 let speedRatio = 0.5;
@@ -233,6 +234,12 @@ window.addEventListener('load', () => {
     speedRatio = parseInt(e.target.value) / 100;
     document.getElementById('speed-value').textContent = e.target.value + '%';
   });
+
+  // Panel toggle: collapse by default on mobile
+  const jsonPanel = document.getElementById('json-panel');
+  const panelToggleBtn = document.getElementById('panel-toggle-btn');
+  if (window.innerWidth <= 600) jsonPanel.classList.add('collapsed');
+  panelToggleBtn.addEventListener('click', () => jsonPanel.classList.toggle('collapsed'));
 
   connect();
 });
