@@ -227,6 +227,7 @@ window.addEventListener('load', () => {
   // REC button
   const recBtn = document.getElementById('rec-btn');
   recBtn.addEventListener('click', toggleRecording);
+  recBtn.addEventListener('touchend', (e) => { e.preventDefault(); toggleRecording(); });
 
   // Speed slider
   const speedSlider = document.getElementById('speed-slider');
@@ -240,6 +241,7 @@ window.addEventListener('load', () => {
   const panelToggleBtn = document.getElementById('panel-toggle-btn');
   if (window.innerWidth <= 600) jsonPanel.classList.add('collapsed');
   panelToggleBtn.addEventListener('click', () => jsonPanel.classList.toggle('collapsed'));
+  panelToggleBtn.addEventListener('touchend', (e) => { e.preventDefault(); jsonPanel.classList.toggle('collapsed'); });
 
   connect();
 });
