@@ -422,7 +422,31 @@ function parseCsvRows(text) {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return [];
 
-  const splitLine = (line) => line.includes('\t') ? line.split('\t') : line.split(',');
+  const splitCommaQuoted = (line) => {
+    const out = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i += 1) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          cur += '"';
+          i += 1;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (ch === ',' && !inQuotes) {
+        out.push(cur);
+        cur = '';
+      } else {
+        cur += ch;
+      }
+    }
+    out.push(cur);
+    return out;
+  };
+
+  const splitLine = (line) => (line.includes('\t') ? line.split('\t') : splitCommaQuoted(line));
   const headers = splitLine(lines[0]).map((h) => h.trim().toLowerCase());
 
   const col = {
