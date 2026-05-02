@@ -178,10 +178,11 @@ body {
 }
 .ctrl-btn:hover { filter: brightness(1.4); }
 
-.btn-start  { border-color: var(--green);  color: var(--green); }
-.btn-stop   { border-color: var(--red);    color: var(--red); }
-.btn-pause  { border-color: var(--yellow); color: var(--yellow); }
-.btn-resume { border-color: var(--blue);   color: var(--blue); }
+.btn-start       { border-color: var(--green);  color: var(--green); }
+.btn-stop        { border-color: var(--red);    color: var(--red); }
+.btn-pause       { border-color: var(--yellow); color: var(--yellow); }
+.btn-resume      { border-color: var(--blue);   color: var(--blue); }
+.btn-pause-mode  { border-color: var(--dim);    color: var(--dim); }
 
 /* ── Manual drive ── */
 #manual-drive {

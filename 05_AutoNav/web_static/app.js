@@ -33,6 +33,7 @@ const mImuAge   = document.getElementById('m-imu-age');
 // ── State ────────────────────────────────────────────────────
 let navWs = null;
 const lastUpdate = { imu: 0, rtk: 0, status: 0 };
+let currentPauseMode = 'all';
 
 // ── Helpers ──────────────────────────────────────────────────
 function fmt(v, d = 1, unit = '') {
@@ -117,6 +118,13 @@ function handleNavStatus(msg) {
     banner.style.display = 'flex';
   } else {
     banner.style.display = 'none';
+  }
+
+  // Pause mode button
+  if (msg.pause_mode !== undefined && msg.pause_mode !== currentPauseMode) {
+    currentPauseMode = msg.pause_mode;
+    document.getElementById('btn-pause-mode').textContent =
+      msg.pause_mode === 'all' ? 'Stop: All WPs' : 'Stop: Pause WPs';
   }
 
   // Waypoint window
@@ -274,6 +282,14 @@ document.getElementById('btn-continue').addEventListener('click', () => {
   const btn = document.getElementById('btn-continue');
   btn.textContent = 'SENT ✓';
   setTimeout(() => { btn.textContent = 'CONTINUE →'; }, 800);
+});
+
+// ── Pause mode toggle ────────────────────────────────────────
+document.getElementById('btn-pause-mode').addEventListener('click', () => {
+  const newMode = currentPauseMode === 'all' ? 'type' : 'all';
+  sendCmd('set_pause_mode', { mode: newMode });
+  document.getElementById('btn-pause-mode').textContent =
+    newMode === 'all' ? 'Stop: All WPs' : 'Stop: Pause WPs';
 });
 
 // ── CSV import ───────────────────────────────────────────────

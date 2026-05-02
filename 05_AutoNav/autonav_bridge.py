@@ -85,20 +85,24 @@ logger = _setup_logger()
 
 
 def _load_default_waypoints(path: Path) -> list[dict]:
-    """Load path.csv → list of {lat, lon} dicts."""
+    """Load path.csv → list of {lat, lon, type} dicts."""
     waypoints = []
     with open(path, newline="", encoding="utf-8") as f:
         sample = f.read(4096)
         f.seek(0)
         dialect = csv.Sniffer().sniff(sample, delimiters="\t,")
         for row in csv.DictReader(f, dialect=dialect):
-            waypoints.append({"lat": float(row["lat"]), "lon": float(row["lon"])})
+            waypoints.append({
+                "lat": float(row["lat"]),
+                "lon": float(row["lon"]),
+                "type": str(row.get("type", "") or "").strip(),
+            })
     logger.info("Loaded %d waypoints from %s", len(waypoints), path)
     return waypoints
 
 
 def _convert_csv_to_waypoints(content: str) -> list[dict]:
-    """Parse CSV text content → list of {lat, lon} dicts."""
+    """Parse CSV text content → list of {lat, lon, type} dicts."""
     waypoints = []
     try:
         sample = content[:4096]
@@ -108,7 +112,11 @@ def _convert_csv_to_waypoints(content: str) -> list[dict]:
             dialect = csv.excel  # fall back to standard comma-separated
         reader = csv.DictReader(content.splitlines(), dialect=dialect)
         for row in reader:
-            waypoints.append({"lat": float(row["lat"]), "lon": float(row["lon"])})
+            waypoints.append({
+                "lat": float(row["lat"]),
+                "lon": float(row["lon"]),
+                "type": str(row.get("type", "") or "").strip(),
+            })
         logger.info("Parsed %d waypoints from uploaded CSV", len(waypoints))
     except Exception as exc:
         logger.warning("_parse_csv_content: failed to parse CSV: %s", exc)
@@ -217,8 +225,15 @@ def _apply_waypoint_progress(loop: "AutoNavLoop", linear: float, angular: float,
         logger.info("Arrived at destination")
         return 0.0, 0.0, False, False
 
-    loop._waiting_at_wp = True
-    return 0.0, 0.0, False, False
+    wp_type = loop._waypoints[loop._wp_idx].get("type", "")
+    should_pause = (loop._pause_mode == "all") or (wp_type == "pause")
+    if should_pause:
+        loop._waiting_at_wp = True
+        return 0.0, 0.0, False, False
+    else:
+        loop._wp_idx += 1
+        loop._arrive_counter = 0
+        return 0.0, 0.0, False, True
 
 
 def _scaled_robot_command(state: str, linear: float, angular: float,
@@ -272,6 +287,7 @@ def _build_autonav_status(loop: "AutoNavLoop", heading: float | None,
         "waypoints_window":   loop._get_wp_window(),
         "waiting_at_wp":      loop._waiting_at_wp,
         "waiting_wp_idx":     loop._wp_idx if loop._waiting_at_wp else None,
+        "pause_mode":         loop._pause_mode,
         "imu_raw":            imu_raw,
         "rtk_raw":            rtk_raw,
     }
@@ -564,6 +580,11 @@ class AutoNavLoop:
         self._calib_mark: dict | None = None   # {lat, lon} of marked forward point
         self._calib_offset_applied: float | None = None  # last applied offset
 
+        # ── Pause mode ────────────────────────────────────────────────────────
+        # "all"  = stop at every waypoint (original behavior)
+        # "type" = stop only at waypoints with type == "pause"
+        self._pause_mode: str = "all"
+
         # ── Stop blocking mechanism ────────────────────────────────────────────
         # When stop() is called, _resume_event is cleared, blocking the main loop
         # Resume or start will set it, unblocking the loop
@@ -581,6 +602,12 @@ class AutoNavLoop:
     def confirm_wp(self) -> None:
         """Called when UI confirms advancing from a waiting waypoint."""
         self._confirm_advance = True
+
+    def set_pause_mode(self, mode: str) -> None:
+        """Set pause mode: 'all' (stop at every wp) or 'type' (stop only at type==pause wps)."""
+        if mode in ("all", "type"):
+            self._pause_mode = mode
+            logger.info("Pause mode set to: %s", mode)
 
     # ── State control (called from WS message handler) ────────────────────────
 
@@ -856,6 +883,8 @@ class AutoNavBridge:
                         self._nav_loop._confirm_advance,
                         self._nav_loop._wp_idx)
             self._nav_loop.confirm_wp()
+        elif t == "set_pause_mode":
+            self._nav_loop.set_pause_mode(str(msg.get("mode", "all")))
 
 
 if __name__ == "__main__":
