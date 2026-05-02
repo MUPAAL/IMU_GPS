@@ -822,6 +822,28 @@ class AutoNavBridge:
                 await self._nav_loop.cmd_load_waypoints(waypoints)
             else:
                 logger.warning("load_csv: no valid waypoints parsed from uploaded content")
+        elif t == "gen_path":
+            lat = float(msg.get("lat", 0))
+            lon = float(msg.get("lon", 0))
+            try:
+                import sys as _s
+                scripts_dir = str(Path(__file__).parent / "scripts")
+                if scripts_dir not in _s.path:
+                    _s.path.insert(0, scripts_dir)
+                from convert_offsets_to_latlon import convert as _convert
+                input_csv = Path(__file__).parent / "scripts" / "offset.csv"
+                rc = _convert(input_csv, PATH_FILE, lat, lon)
+                if rc == 0:
+                    waypoints = _load_default_waypoints(PATH_FILE)
+                    if waypoints:
+                        await self._nav_loop.cmd_load_waypoints(waypoints)
+                        logger.info("gen_path: %d waypoints regenerated (base %.7f, %.7f)", len(waypoints), lat, lon)
+                    else:
+                        logger.warning("gen_path: convert ok but no waypoints parsed")
+                else:
+                    logger.warning("gen_path: convert() returned error %s", rc)
+            except Exception as exc:
+                logger.error("gen_path: %s", exc)
         elif t == "calib_mark":
             self._nav_loop.cmd_mark_pos()
         elif t == "calib_apply":

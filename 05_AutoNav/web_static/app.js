@@ -292,5 +292,23 @@ csvInput.addEventListener('change', (e) => {
   csvInput.value = '';  // allow re-selecting the same file
 });
 
+// ── GEN PATH ─────────────────────────────────────────────────
+const btnGenPath = document.getElementById('btn-gen-path');
+btnGenPath.addEventListener('click', () => {
+  if (_curLat == null || _curLon == null) {
+    alert('No GPS fix — wait for RTK data.');
+    return;
+  }
+  sendCmd('gen_path', { lat: _curLat, lon: _curLon });
+  const orig = btnGenPath.textContent;
+  btnGenPath.textContent = 'SENDING…';
+  btnGenPath.disabled = true;
+  setTimeout(() => {
+    btnGenPath.textContent = 'DONE ✓';
+    btnGenPath.disabled = false;
+    setTimeout(() => { btnGenPath.textContent = orig; }, 1500);
+  }, 800);
+});
+
 // ── Boot ─────────────────────────────────────────────────────
 connectAutoNav();

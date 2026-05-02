@@ -17,8 +17,9 @@ import csv
 
 # All inputs are configured here as constants. No CLI or runtime input required.
 # Edit these values directly to change behavior.
-BASE_LAT = 38.94221041
-BASE_LON = -92.31965214
+
+BASE_LAT = 38.941083678333335
+BASE_LON = -92.31831714166667
 
 # Path to input CSV (relative to this script). Edit as needed.
 INPUT_CSV = Path(__file__).with_name("offset.csv")
@@ -26,7 +27,7 @@ INPUT_CSV = Path(__file__).with_name("offset.csv")
 OUTPUT_CSV = Path(__file__).parent.parent / "path.csv"
 
 
-def parse_float(s):
+def _parse_float(s):
     try:
         return float(s)
     except Exception:
@@ -50,8 +51,8 @@ def convert(input_path: Path, output_path: Path, base_lat: float, base_lon: floa
 
         rows = []
         for r in reader:
-            off_lat = parse_float(r.get("st lat", 0))
-            off_lon = parse_float(r.get("st lon", 0))
+            off_lat = _parse_float(r.get("st lat", 0))
+            off_lon = _parse_float(r.get("st lon", 0))
             lat = base_lat + off_lat
             lon = base_lon + off_lon
             row_out = dict(r)
